@@ -11,29 +11,34 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: netdisk
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       OPENLIST_VERSION: v4.2.9
+      OPENLIST_ADMIN_PASS: ${{ secrets.OPENLIST_ADMIN_PASS }}
+      OPENLIST_ADMIN_PASSWORD: ${{ secrets.OPENLIST_ADMIN_PASS }}
+      REPO_PAT: ${{ secrets.REPO_PAT }}
+      QUARK_COOKIE: ${{ secrets.QUARK_COOKIE }}
+      UC_COOKIE: ${{ secrets.UC_COOKIE }}
+      ALIYUN_REFRESH_TOKEN: ${{ secrets.ALIYUN_REFRESH_TOKEN }}
+      BAIDU_REFRESH_TOKEN: ${{ secrets.BAIDU_REFRESH_TOKEN }}
+      CLOUD189_COOKIE: ${{ secrets.CLOUD189_COOKIE }}
+      XUNLEI_COOKIE: ${{ secrets.XUNLEI_COOKIE }}
+      PAN123_TOKEN: ${{ secrets.PAN123_TOKEN }}
+      PAN115_COOKIE: ${{ secrets.PAN115_COOKIE }}
+      LANZOU_USER: ${{ secrets.LANZOU_USER }}
+      LANZOU_PASS: ${{ secrets.LANZOU_PASS }}
+      FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
     steps:
       - uses: actions/checkout@v4
 
       - name: 安装并启动 OpenList,挂载 Secrets 里的网盘
-        env:
-          OPENLIST_ADMIN_PASS: ${{ secrets.OPENLIST_ADMIN_PASS }}
-          OPENLIST_ADMIN_PASSWORD: ${{ secrets.OPENLIST_ADMIN_PASS }}
-          QUARK_COOKIE: ${{ secrets.QUARK_COOKIE }}
-          UC_COOKIE: ${{ secrets.UC_COOKIE }}
-          ALIYUN_REFRESH_TOKEN: ${{ secrets.ALIYUN_REFRESH_TOKEN }}
-          BAIDU_REFRESH_TOKEN: ${{ secrets.BAIDU_REFRESH_TOKEN }}
-          CLOUD189_COOKIE: ${{ secrets.CLOUD189_COOKIE }}
-          XUNLEI_COOKIE: ${{ secrets.XUNLEI_COOKIE }}
-          PAN123_TOKEN: ${{ secrets.PAN123_TOKEN }}
-          PAN115_COOKIE: ${{ secrets.PAN115_COOKIE }}
-          LANZOU_USER: ${{ secrets.LANZOU_USER }}
-          LANZOU_PASS: ${{ secrets.LANZOU_PASS }}
         run: |
           curl -sL "https://github.com/OpenListTeam/OpenList/releases/download/${OPENLIST_VERSION}/openlist-linux-amd64.tar.gz" | tar xz -C /usr/local/bin
           curl -s https://rclone.org/install.sh | sudo bash
@@ -52,8 +57,6 @@ jobs:
           python3 scripts/bootstrap_storages.py
 
       - name: 配置 rclone
-        env:
-          OPENLIST_ADMIN_PASS: ${{ secrets.OPENLIST_ADMIN_PASS }}
         run: |
           mkdir -p ~/.config/rclone
           {
@@ -66,8 +69,6 @@ jobs:
           } > ~/.config/rclone/rclone.conf
 
       - name: 列出挂载的网盘目录(清单发飞书,不进公开日志)
-        env:
-          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
         run: |
           rclone lsf "alist:/" --max-depth "${{ inputs.depth }}" > listing.txt || true
           n=$(grep -c . listing.txt || true)
@@ -79,3 +80,7 @@ jobs:
           jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
             | curl -s -X POST "${FEISHU_WEBHOOK}" \
                 -H "Content-Type: application/json" -d @-
+
+      - name: 回写轮换令牌(兜底)
+        if: always()
+        run: python3 scripts/bootstrap_storages.py --sync-only

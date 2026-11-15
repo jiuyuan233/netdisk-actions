@@ -27,12 +27,30 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: netdisk
+  cancel-in-progress: false
+
 jobs:
   download:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
       OPENLIST_VERSION: v4.2.9
+      OPENLIST_ADMIN_PASS: ${{ secrets.OPENLIST_ADMIN_PASS }}
+      OPENLIST_ADMIN_PASSWORD: ${{ secrets.OPENLIST_ADMIN_PASS }}
+      REPO_PAT: ${{ secrets.REPO_PAT }}
+      QUARK_COOKIE: ${{ secrets.QUARK_COOKIE }}
+      UC_COOKIE: ${{ secrets.UC_COOKIE }}
+      ALIYUN_REFRESH_TOKEN: ${{ secrets.ALIYUN_REFRESH_TOKEN }}
+      BAIDU_REFRESH_TOKEN: ${{ secrets.BAIDU_REFRESH_TOKEN }}
+      CLOUD189_COOKIE: ${{ secrets.CLOUD189_COOKIE }}
+      XUNLEI_COOKIE: ${{ secrets.XUNLEI_COOKIE }}
+      PAN123_TOKEN: ${{ secrets.PAN123_TOKEN }}
+      PAN115_COOKIE: ${{ secrets.PAN115_COOKIE }}
+      LANZOU_USER: ${{ secrets.LANZOU_USER }}
+      LANZOU_PASS: ${{ secrets.LANZOU_PASS }}
+      FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
     steps:
       - uses: actions/checkout@v4
 
@@ -42,19 +60,6 @@ jobs:
           curl -s https://rclone.org/install.sh | sudo bash
 
       - name: 启动 OpenList 并挂载网盘(Secrets 中的 cookie)
-        env:
-          OPENLIST_ADMIN_PASS: ${{ secrets.OPENLIST_ADMIN_PASS }}
-          OPENLIST_ADMIN_PASSWORD: ${{ secrets.OPENLIST_ADMIN_PASS }}
-          QUARK_COOKIE: ${{ secrets.QUARK_COOKIE }}
-          UC_COOKIE: ${{ secrets.UC_COOKIE }}
-          ALIYUN_REFRESH_TOKEN: ${{ secrets.ALIYUN_REFRESH_TOKEN }}
-          BAIDU_REFRESH_TOKEN: ${{ secrets.BAIDU_REFRESH_TOKEN }}
-          CLOUD189_COOKIE: ${{ secrets.CLOUD189_COOKIE }}
-          XUNLEI_COOKIE: ${{ secrets.XUNLEI_COOKIE }}
-          PAN123_TOKEN: ${{ secrets.PAN123_TOKEN }}
-          PAN115_COOKIE: ${{ secrets.PAN115_COOKIE }}
-          LANZOU_USER: ${{ secrets.LANZOU_USER }}
-          LANZOU_PASS: ${{ secrets.LANZOU_PASS }}
         run: |
           mkdir -p run
           (cd run && nohup openlist server > openlist.log 2>&1 &)
@@ -71,9 +76,6 @@ jobs:
           python3 scripts/bootstrap_storages.py
 
       - name: 写入 rclone 配置
-        env:
-          OPENLIST_ADMIN_PASS: ${{ secrets.OPENLIST_ADMIN_PASS }}
-          OPENLIST_ADMIN_USER: ${{ secrets.OPENLIST_ADMIN_USER }}
         run: |
           mkdir -p ~/.config/rclone
           {
@@ -81,7 +83,7 @@ jobs:
             echo "type = webdav"
             echo "url = http://127.0.0.1:5244/dav"
             echo "vendor = other"
-            echo "user = ${OPENLIST_ADMIN_USER:-admin}"
+            echo "user = admin"
             echo "pass = $(rclone obscure "${OPENLIST_ADMIN_PASS}")"
           } > ~/.config/rclone/rclone.conf
 
@@ -98,7 +100,6 @@ jobs:
       - name: 查看目录(list 模式)
         if: ${{ inputs.mode == 'list' }}
         env:
-          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
           SRC_PATH: ${{ inputs.path }}
         run: |
           rclone lsl "alist:${{ inputs.path }}" --max-depth "${{ inputs.depth }}" > listing.txt 2> listing.err || true
@@ -145,7 +146,6 @@ jobs:
       - name: 飞书通知
         if: ${{ always() && inputs.mode == 'download' }}
         env:
-          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
           STATUS: ${{ job.status }}
           RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ steps.release.outputs.tag }}
           JOB_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -159,3 +159,7 @@ jobs:
           jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
             | curl -s -X POST "${FEISHU_WEBHOOK}" \
                 -H "Content-Type: application/json" -d @-
+
+      - name: 回写轮换令牌(兜底)
+        if: always()
+        run: python3 scripts/bootstrap_storages.py --sync-only
