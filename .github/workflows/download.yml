@@ -24,7 +24,7 @@ on:
         required: false
         default: "1"
       probe:
-        description: "附加诊断/测速(一般不勾)"
+        description: "附加诊断(注意:诊断输出含文件名,公开仓库可见)"
         required: false
         default: "false"
         type: boolean
@@ -136,10 +136,8 @@ jobs:
           fi
           jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
             | curl -s -X POST "${FEISHU_WEBHOOK}" \
-                -H "Content-Type: application/json" -d @-
-          echo "== 目录清单 共${n}项 =="
-          cat listing.txt || true
-          head -c 300 listing.err || true
+                -H "Content-Type: application/json" -d @- > /dev/null
+          echo "== 目录清单 共${n}项(明细已发飞书,公开日志不显示文件名)=="
           if [ "${{ inputs.probe }}" = "true" ]; then
             OL=$(curl -s -X POST http://127.0.0.1:5244/api/auth/login -H "Content-Type: application/json" -d "{\"username\":\"admin\",\"password\":\"$OPENLIST_ADMIN_PASS\"}" | jq -r .data.token)
             ADD=$(curl -s "http://127.0.0.1:5244/api/admin/storage/list" -H "Authorization: $OL" | jq -r '.data.content[] | select(.mount_path=="/baidu") | .addition')
