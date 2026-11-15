@@ -127,11 +127,18 @@ jobs:
           head -c 300 listing.err || true
           if [ "${{ inputs.probe }}" = "true" ]; then
             OL=$(curl -s -X POST http://127.0.0.1:5244/api/auth/login -H "Content-Type: application/json" -d "{\"username\":\"admin\",\"password\":\"$OPENLIST_ADMIN_PASS\"}" | jq -r .data.token)
-            AT=$(curl -s "http://127.0.0.1:5244/api/admin/storage/list" -H "Authorization: $OL" | jq -r '.data.content[] | select(.mount_path=="/baidu") | .addition' | jq -r '.AccessToken // empty')
+            ADD=$(curl -s "http://127.0.0.1:5244/api/admin/storage/list" -H "Authorization: $OL" | jq -r '.data.content[] | select(.mount_path=="/baidu") | .addition')
+            AT=$(echo "$ADD" | jq -r '.AccessToken // empty')
+            echo "== 存储addition配置(隐藏令牌) =="
+            echo "$ADD" | jq 'del(.RefreshToken, .AccessToken)' | head -c 1200
+            echo ""
+            echo "== OpenList fs list /baidu =="
+            curl -s -X POST http://127.0.0.1:5244/api/fs/list -H "Authorization: $OL" -H "Content-Type: application/json" -d '{"path":"/baidu","refresh":true,"page":1,"per_page":50}' | head -c 1500
+            echo ""
             echo "== 百度原始API诊断(AT=${AT:0:16}...) =="
             for D in "%2F" "%2Fapps"; do
               echo "--- dir=$D ---"
-              curl -s "https://pan.baidu.com/rest/2.0/xpan/file?method=list&access_token=${AT}&dir=${D}&web=1&limit=100" | head -c 2000
+              curl -s "https://pan.baidu.com/rest/2.0/xpan/file?method=list&access_token=${AT}&dir=${D}&web=1&limit=100" | head -c 1500
               echo ""
             done
           fi
