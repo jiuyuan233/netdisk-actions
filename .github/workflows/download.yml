@@ -263,7 +263,7 @@ jobs:
               safe="dl-$(printf '%s' "$base" | md5sum | cut -c1-8)${ext:+.$ext}"
               mv "$f" "out/$safe"
               NAMES="$NAMES
-- $base → $safe"
+              - ${base} → ${safe}"
             fi
           done
           TAG="dl-$(date +%Y%m%d-%H%M%S)"

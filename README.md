@@ -17,11 +17,13 @@
 | 夸克 | `QUARK_COOKIE` | `quark` | `/quark/资源/xx.mkv` |
 | UC 网盘 | `UC_COOKIE` | `uc` | `/uc/...` |
 | 阿里云盘 | `ALIYUN_REFRESH_TOKEN` | `aliyun` | `/aliyun/...` |
-| 天翼云盘 | `CLOUD189_COOKIE` | `cloud189` | `/cloud189/...` |
-| 迅雷云盘 | `XUNLEI_COOKIE` | `xunlei` | `/xunlei/...` |
-| 123 云盘 | `PAN123_TOKEN` | `123pan` | `/123pan/...` |
+| 天翼云盘 | `CLOUD189_USER` + `CLOUD189_PASS` | `cloud189` | `/cloud189/...` |
+| 迅雷云盘 | `XUNLEI_USER` + `XUNLEI_PASS` | `xunlei` | `/xunlei/...` |
+| 123 云盘 | `PAN123_USER` + `PAN123_PASS` | `123pan` | `/123pan/...` |
 | 115 网盘 | `PAN115_COOKIE` | `115` | `/115/...` |
-| 蓝奏云 | `LANZOU_USER` / `LANZOU_PASS` | `lanzou` | `/lanzou/...` |
+| 蓝奏云 | `LANZOU_USER` + `LANZOU_PASS` | `lanzou` | `/lanzou/...` |
+
+> 📖 **每个网盘的详细配置教程(驱动名、字段、cookie 获取步骤、常见报错)见 [docs/网盘配置教程.md](docs/网盘配置教程.md)**——驱动名与字段已逐个对照 OpenList v4.2.9 源码核实(迅雷=`Thunder`、天翼=`189Cloud`、115=`115 Cloud`,别用想当然的名字)。
 
 > 以后在别处(本地/NAS)跑 OpenList,也请用同一套挂载名,路径即可通用。新增网盘:在 `storages.json` 加一行 + 配一个 Secret(驱动字段名见 [doc.oplist.org](https://doc.oplist.org),**所有字段显式写全,不要依赖默认值**)。
 
@@ -74,7 +76,7 @@
 | `FEISHU_WEBHOOK` | 飞书自定义机器人 webhook 地址 |
 | `REPO_PAT` | 一个对本仓库有管理权限的 PAT(用于回写轮换令牌和自动接力) |
 | `BAIDU_REFRESH_TOKEN` | 百度,用 [OpenList Token 工具](https://api.oplist.org) 授权获取"刷新令牌" |
-| `QUARK_COOKIE` 等 | 夸克/UC/天翼/迅雷/123/115 的网页 cookie,蓝奏云账密,字段见 `storages.json` |
+| `QUARK_COOKIE` 等 | 各网盘凭证,**名字和取法见 [docs/网盘配置教程.md](docs/网盘配置教程.md)** |
 
 3. 各驱动字段名以 [doc.oplist.org](https://doc.oplist.org) 为准;挂载失败时 Actions 日志会列出可用驱动名和报错原因
 

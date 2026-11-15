@@ -1,11 +1,11 @@
 [
+  { "mount_path": "/baidu",    "driver": "BaiduNetdisk",    "fields": { "refresh_token": "env:BAIDU_REFRESH_TOKEN", "root_folder_path": "/", "order_by": "name", "order_direction": "asc", "download_api": "official", "use_online_api": false, "client_id": "NqOMXF6XGhGRIGemsQ9nG0Na", "client_secret": "SVT6xpMdLcx6v4aCR4wT8BBOTbzFO8LM" } },
   { "mount_path": "/quark",    "driver": "Quark",           "fields": { "cookie": "env:QUARK_COOKIE" } },
   { "mount_path": "/uc",       "driver": "UC",              "fields": { "cookie": "env:UC_COOKIE" } },
-  { "mount_path": "/aliyun",   "driver": "AliyundriveOpen", "fields": { "refresh_token": "env:ALIYUN_REFRESH_TOKEN" } },
-  { "mount_path": "/baidu",    "driver": "BaiduNetdisk",    "fields": { "refresh_token": "env:BAIDU_REFRESH_TOKEN", "root_folder_path": "/", "order_by": "name", "order_direction": "asc", "download_api": "official", "use_online_api": false, "client_id": "NqOMXF6XGhGRIGemsQ9nG0Na", "client_secret": "SVT6xpMdLcx6v4aCR4wT8BBOTbzFO8LM" } },
-  { "mount_path": "/cloud189", "driver": "Cloud189",        "fields": { "cookie": "env:CLOUD189_COOKIE" } },
-  { "mount_path": "/xunlei",   "driver": "Xunlei",          "fields": { "cookie": "env:XUNLEI_COOKIE" } },
-  { "mount_path": "/123pan",   "driver": "123Pan",          "fields": { "token": "env:PAN123_TOKEN" } },
-  { "mount_path": "/115",      "driver": "115",             "fields": { "cookie": "env:PAN115_COOKIE" } },
-  { "mount_path": "/lanzou",   "driver": "Lanzou",          "fields": { "username": "env:LANZOU_USER", "password": "env:LANZOU_PASS" } }
+  { "mount_path": "/aliyun",   "driver": "AliyundriveOpen", "fields": { "refresh_token": "env:ALIYUN_REFRESH_TOKEN", "drive_type": "default", "alipan_type": "default", "remove_way": "trash", "use_online_api": true } },
+  { "mount_path": "/cloud189", "driver": "189Cloud",        "fields": { "username": "env:CLOUD189_USER", "password": "env:CLOUD189_PASS" } },
+  { "mount_path": "/xunlei",   "driver": "Thunder",         "fields": { "username": "env:XUNLEI_USER", "password": "env:XUNLEI_PASS" } },
+  { "mount_path": "/123pan",   "driver": "123Pan",          "fields": { "username": "env:PAN123_USER", "password": "env:PAN123_PASS", "platform": "web" } },
+  { "mount_path": "/115",      "driver": "115 Cloud",       "fields": { "cookie": "env:PAN115_COOKIE", "page_size": "1000", "limit_rate": "2" } },
+  { "mount_path": "/lanzou",   "driver": "Lanzou",          "fields": { "type": "account", "account": "env:LANZOU_USER", "password": "env:LANZOU_PASS", "baseUrl": "https://pc.woozooo.com", "shareUrl": "https://pan.lanzoui.com" } }
 ]
