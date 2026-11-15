@@ -11,10 +11,25 @@ on:
         options:
           - download
           - list
-      path:
-        description: "OpenList 路径,如 /baidu/宋浩精选【高数、线代、概率论】.zip"
-        required: true
-        type: string
+      netdisk:
+        description: "网盘(与 storages.json 挂载名一致,未配置 Secret 的会被跳过)"
+        required: false
+        default: "baidu"
+        type: choice
+        options:
+          - baidu
+          - quark
+          - uc
+          - aliyun
+          - cloud189
+          - xunlei
+          - 123pan
+          - 115
+          - lanzou
+      subpath:
+        description: "子路径(挂载名之后的部分,以 / 开头,如 /学习资料/xx.pdf;留空=网盘根目录)"
+        required: false
+        default: ""
       include:
         description: "文件名过滤(可选,通配符,如 *.mkv;留空=全部)"
         required: false
@@ -64,6 +79,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: 拼接完整路径(挂载名 + 子路径,与 OpenList 一致)
+        id: src
+        run: |
+          FULL="/${{ inputs.netdisk }}"
+          SUB="${{ inputs.subpath }}"
+          if [ -n "$SUB" ]; then
+            case "$SUB" in /*) ;; *) SUB="/$SUB";; esac
+            FULL="${FULL}${SUB}"
+          fi
+          FULL=$(printf '%s' "$FULL" | sed 's:/\+$::')
+          if [ -z "$FULL" ]; then FULL="/${{ inputs.netdisk }}"; fi
+          echo "full=$FULL" >> "$GITHUB_OUTPUT"
+          echo "完整路径: $FULL"
+
       - name: 安装 OpenList、rclone、aria2
         run: |
           curl -sL "https://github.com/OpenListTeam/OpenList/releases/download/${OPENLIST_VERSION}/openlist-linux-amd64.tar.gz" | tar xz -C /usr/local/bin
@@ -101,7 +130,7 @@ jobs:
 
       - name: 计算断点任务键
         id: dlkey
-        run: echo "k=$(printf '%s' "${{ inputs.path }}" | md5sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+        run: echo "k=$(printf '%s' "${{ steps.src.outputs.full }}" | md5sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: 恢复上次下载进度
         if: ${{ inputs.mode == 'download' }}
@@ -125,9 +154,9 @@ jobs:
       - name: 查看目录(list 模式)
         if: ${{ inputs.mode == 'list' }}
         env:
-          SRC_PATH: ${{ inputs.path }}
+          SRC_PATH: ${{ steps.src.outputs.full }}
         run: |
-          rclone lsl "alist:${{ inputs.path }}" --max-depth "${{ inputs.depth }}" > listing.txt 2> listing.err || true
+          rclone lsl "alist:${SRC_PATH}" --max-depth "${{ inputs.depth }}" > listing.txt 2> listing.err || true
           n=$(grep -c . listing.txt || true)
           if [ "$n" = "0" ]; then
             TEXT=$(printf '📂 %s:没列到内容(路径不对或为空)。错误:%s' "${SRC_PATH}" "$(head -c 200 listing.err)")
@@ -138,28 +167,18 @@ jobs:
             | curl -s -X POST "${FEISHU_WEBHOOK}" \
                 -H "Content-Type: application/json" -d @- > /dev/null
           echo "== 目录清单 共${n}项(明细已发飞书,公开日志不显示文件名)=="
-          if [ "${{ inputs.probe }}" = "true" ]; then
-            OL=$(curl -s -X POST http://127.0.0.1:5244/api/auth/login -H "Content-Type: application/json" -d "{\"username\":\"admin\",\"password\":\"$OPENLIST_ADMIN_PASS\"}" | jq -r .data.token)
-            ADD=$(curl -s "http://127.0.0.1:5244/api/admin/storage/list" -H "Authorization: $OL" | jq -r '.data.content[] | select(.mount_path=="/baidu") | .addition')
-            AT=$(echo "$ADD" | jq -r '.AccessToken // empty')
-            echo "== 百度原始API诊断(AT=${AT:0:16}...) =="
-            for D in "%2F" "%2Fapps"; do
-              echo "--- dir=$D ---"
-              curl -s "https://pan.baidu.com/rest/2.0/xpan/file?method=list&access_token=${AT}&dir=${D}&web=1&limit=100" | head -c 1500
-              echo ""
-            done
-          fi
 
       - name: 从网盘下载文件(aria2 分段续传,失败回退 rclone)
         id: dl
         if: ${{ inputs.mode == 'download' }}
         env:
-          SRC_PATH: ${{ inputs.path }}
+          SRC_PATH: ${{ steps.src.outputs.full }}
           ATTEMPT: ${{ inputs.attempt }}
         run: |
           mkdir -p out
           OL=$(curl -s -X POST http://127.0.0.1:5244/api/auth/login -H "Content-Type: application/json" -d "{\"username\":\"admin\",\"password\":\"$OPENLIST_ADMIN_PASS\"}" | jq -r .data.token)
-          INFO=$(curl -s -X POST http://127.0.0.1:5244/api/fs/get -H "Authorization: $OL" -H "Content-Type: application/json" -d "{\"path\":\"${SRC_PATH}\"}")
+          REQ=$(jq -n --arg p "$SRC_PATH" '{path:$p}')
+          INFO=$(curl -s -X POST http://127.0.0.1:5244/api/fs/get -H "Authorization: $OL" -H "Content-Type: application/json" -d "$REQ")
           RAW_URL=$(echo "$INFO" | jq -r '.data.raw_url // empty')
           TOTAL=$(echo "$INFO" | jq -r '.data.size // 0')
           echo "直链: ${RAW_URL:0:60}... | 大小: $TOTAL"
@@ -211,7 +230,7 @@ jobs:
         if: ${{ always() && steps.dl.outputs.state == 'partial' }}
         env:
           ATTEMPT: ${{ inputs.attempt }}
-          SRC_PATH: ${{ inputs.path }}
+          SRC_PATH: ${{ steps.src.outputs.full }}
         run: |
           NEXT=$(( ${ATTEMPT:-0} + 1 ))
           if [ "$NEXT" -gt 10 ]; then
@@ -220,8 +239,9 @@ jobs:
               | curl -s -X POST "${FEISHU_WEBHOOK}" -H "Content-Type: application/json" -d @- > /dev/null
             exit 0
           fi
-          PAYLOAD=$(jq -n --arg ref "${{ github.ref_name }}" --arg path "$SRC_PATH" --arg attempt "$NEXT" \
-            '{ref:$ref, inputs:{mode:"download", path:$path, attempt:$attempt}}')
+          PAYLOAD=$(jq -n --arg ref "${{ github.ref_name }}" \
+            --arg netdisk "${{ inputs.netdisk }}" --arg sub "${{ inputs.subpath }}" --arg attempt "$NEXT" \
+            '{ref:$ref, inputs:{mode:"download", netdisk:$netdisk, subpath:$sub, attempt:$attempt}}')
           code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
             -H "Authorization: token $REPO_PAT" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/download.yml/dispatches" \
@@ -249,7 +269,7 @@ jobs:
           TAG="dl-$(date +%Y%m%d-%H%M%S)"
           gh release create "$TAG" out/* \
             --title "网盘下载 $TAG" \
-            --notes "来源路径: \`${{ inputs.path }}\`$NAMES" --latest
+            --notes "来源路径: \`${{ steps.src.outputs.full }}\`$NAMES" --latest
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: 清理已完成的进度缓存
@@ -268,7 +288,7 @@ jobs:
           STATUS: ${{ job.status }}
           RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ steps.release.outputs.tag }}
           JOB_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SRC_PATH: ${{ inputs.path }}
+          SRC_PATH: ${{ steps.src.outputs.full }}
         run: |
           if [ "$STATUS" = "success" ]; then
             TEXT=$(printf '✅ 网盘下载完成\n来源路径: %s\n%s\n文件下载: %s' "$SRC_PATH" "$(ls -lh out/ | tail -n +2)" "$RELEASE_URL")
