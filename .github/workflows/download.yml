@@ -9,23 +9,23 @@ on:
         default: "download"
         type: choice
         options:
-          - download
-          - list
+          - "download"
+          - "list"
       netdisk:
         description: "网盘(与 storages.json 挂载名一致,未配置 Secret 的会被跳过)"
         required: false
         default: "baidu"
         type: choice
         options:
-          - baidu
-          - quark
-          - uc
-          - aliyun
-          - cloud189
-          - xunlei
-          - 123pan
-          - 115
-          - lanzou
+          - "baidu"
+          - "quark"
+          - "uc"
+          - "aliyun"
+          - "cloud189"
+          - "xunlei"
+          - "123pan"
+          - "115"
+          - "lanzou"
       subpath:
         description: "子路径(挂载名之后的部分,以 / 开头,如 /学习资料/xx.pdf;留空=网盘根目录)"
         required: false
