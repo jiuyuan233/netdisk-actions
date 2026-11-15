@@ -44,10 +44,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           BR="${{ steps.ai.outputs.branch }}"
+          BODY=$(printf '任务: %s\n\n由 AI 维护流程自动生成,**请人工审核后合并**。合并前建议跑一次 selftest/list 验证。' "${{ inputs.task }}")
           PR_URL=$(gh pr create --base main --head "$BR" \
             --title "🤖 AI 维护:${{ steps.ai.outputs.summary }}" \
-            --body "任务:${{ inputs.task }}
-由 AI 维护流程自动生成,**请人工审核后合并**。合并前建议本地或 Actions 里跑一次 list 模式验证。" \
+            --body "$BODY" \
             --repo "${{ github.repository }}")
           echo "url=$PR_URL" >> "$GITHUB_OUTPUT"
           echo "PR: $PR_URL"
