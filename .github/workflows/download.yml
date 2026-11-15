@@ -170,29 +170,40 @@ jobs:
           SRC_PATH: ${{ steps.src.outputs.full }}
         run: |
           PASS=1
-          # 注意:百度驱动不能创建新目录(mkParentDir 403),探针文件必须放进已存在的目录
-          TESTFILE="selftest-$(date +%H%M%S).txt"
-          echo "netdisk-actions selftest $(date -u +%FT%TZ)" > selftest.txt
-          echo "[1/5] 上传探针文件到 ${SRC_PATH}/${TESTFILE} ..."
-          rclone copyto selftest.txt "alist:${SRC_PATH}/${TESTFILE}" --log-level ERROR || PASS=0
-          echo "[2/5] 列表验证 ..."
-          rclone lsl "alist:${SRC_PATH}/" --log-level ERROR | grep -q "$TESTFILE" || PASS=0
-          echo "[3/5] 取直链并回源下载 ..."
+          # 只读自检:百度官方应用 scope 无写权限(上传/建目录均 403),因此不写网盘,只验证读链路
+          echo "[1/4] 列出 ${SRC_PATH}/ 并选择一个文件 ..."
+          rclone lsf "alist:${SRC_PATH}/" --files-only --recursive --max-depth 3 --log-level ERROR > files.txt 2> files.err || true
+          F=$(head -1 files.txt)
+          if [ -z "$F" ]; then
+            TEXT=$(printf '❌ 自检失败:%s 下(含子目录 3 层)没有可读文件。错误:%s' "${SRC_PATH}" "$(head -c 200 files.err)")
+            jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
+              | curl -s -X POST "${FEISHU_WEBHOOK}" -H "Content-Type: application/json" -d @- > /dev/null
+            exit 1
+          fi
+          echo "已选中一个文件(名称见飞书,不进公开日志)"
+          echo "[2/4] 取直链 ..."
           OL=$(curl -s -X POST http://127.0.0.1:5244/api/auth/login -H "Content-Type: application/json" -d "{\"username\":\"admin\",\"password\":\"$OPENLIST_ADMIN_PASS\"}" | jq -r .data.token)
-          RAW=$(jq -n --arg p "${SRC_PATH}/${TESTFILE}" '{path:$p}' \
+          RAW=$(jq -n --arg p "${SRC_PATH%/}/${F}" '{path:$p}' \
             | curl -s -X POST http://127.0.0.1:5244/api/fs/get -H "Authorization: $OL" -H "Content-Type: application/json" -d @- \
             | jq -r '.data.raw_url // empty')
-          mkdir -p back
-          if [ -n "$RAW" ]; then
-            aria2c -q --allow-overwrite=true -d back -o selftest.txt "$RAW" || PASS=0
-          else
-            echo "未取得直链,回退 rclone 下载"
-            rclone copyto "alist:${SRC_PATH}/${TESTFILE}" back/selftest.txt --log-level ERROR || PASS=0
+          if [ -z "$RAW" ]; then PASS=0; echo "未取得直链"; fi
+          echo "[3/4] 分段拉取前 64KB 验证 ..."
+          SZ=0
+          if [ "$PASS" = 1 ]; then
+            curl -s -L --max-time 120 -A "netdisk" -r 0-65535 -o chunk.bin "$RAW" || PASS=0
+            SZ=$(stat -c %s chunk.bin 2>/dev/null || echo 0)
+            [ "$SZ" -gt 0 ] || PASS=0
           fi
-          echo "[4/5] 内容比对 ..."
-          diff -q selftest.txt back/selftest.txt > /dev/null 2>&1 || PASS=0
-          echo "[5/5] 清理网盘探针文件 ..."
-          rclone deletefile "alist:${SRC_PATH}/${TESTFILE}" --log-level ERROR || true
+          echo "[4/4] 结论(只读自检,无需清理)..."
+          if [ "$PASS" = 1 ]; then
+            TEXT=$(printf '🧪 自检通过(只读):列表/直链/分段拉取 全部 OK(网盘=%s)\n样本: %s(%s 字节前段)' "${{ inputs.netdisk }}" "${SRC_PATH%/}/${F}" "$SZ")
+          else
+            TEXT=$(printf '❌ 自检失败(网盘=%s):列表/直链/分段拉取某环节未通过,查看日志' "${{ inputs.netdisk }}")
+          fi
+          jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
+            | curl -s -X POST "${FEISHU_WEBHOOK}" -H "Content-Type: application/json" -d @- > /dev/null
+          echo "自检结论: $([ "$PASS" = 1 ] && echo "PASS(取样 $SZ 字节)" || echo FAIL)"
+          [ "$PASS" = 1 ] || exit 1
           if [ "$PASS" = 1 ]; then
             TEXT=$(printf '🧪 自检通过:上传/列表/直链下载/内容比对 全部 OK(网盘=%s,路径=%s)' "${{ inputs.netdisk }}" "$SRC_PATH")
           else
