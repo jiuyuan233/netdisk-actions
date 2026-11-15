@@ -1,104 +1,87 @@
 # 网盘下载机(OpenList + GitHub Actions + 飞书通知)
 
-用 GitHub Actions 当下载机:手机/网页上触发一次 workflow,文件从你的网盘下载到 GitHub,飞书收到完成通知,你随时把文件取回本地。**全程不需要电脑开机,本地不需要装任何东西。**
+用 GitHub Actions 当下载机:**网页上点几下按钮**,文件就从你的网盘下载到 GitHub,飞书收到完成通知,你随时把文件取回本地。全程不需要电脑开机,本地不需要装任何东西。
 
-本仓库可以**公开**:所有 cookie/token 只存在于仓库 Secrets 里,仓库中只有占位名(`storages.json` 里是 secret 变量名,不是真实值)。
+- 所有凭证只存 GitHub Secrets,仓库可公开也可私有
+- 支持:百度、阿里云盘、夸克、UC、天翼、迅雷、123 盘、115、蓝奏云等(见 `storages.json`,配了哪个 Secret 用哪个)
+- 百度/阿里的一次性刷新令牌**每次运行自动轮换回写**,授权一次永久可用
 
-## 架构
+## 怎么用(全程图形界面)
+
+### ① 看网盘里有什么
+
+打开仓库 → **Actions** 标签 → 左侧选 **「网盘下载」** → 右侧 **Run workflow ▼** 绿色按钮,表单这样填:
 
 ```
-你(手机/网页)手动触发 workflow,填网盘路径
-        │
-        ▼
-runner 里启动全新 OpenList 实例(管理密码来自 Secret)
-        │
-        ▼
-bootstrap_storages.py 调用管理 API,把 Secrets 里的 cookie/token 动态挂载成网盘
-        │
-        ▼
-rclone 经 WebDAV 拉文件(单文件上限 1G)
-        │
-        ▼
-文件上传到 Release(每文件上限 2GiB,不占配额,自动保留最近 5 个)
-        │
-        ▼
-飞书机器人推送结果 + Release 下载链接
+┌────────────────────────────────────────┐
+│ 操作模式   [ list  ▼ ]   ← 下拉选 list  │
+│ 路径      [ /baidu            ]         │
+│ 文件名过滤 [                ]           │
+│ 目录深度   [ 2 ▼ ]                      │
+│        [ 绿色 Run workflow 按钮 ]       │
+└────────────────────────────────────────┘
 ```
 
-- **引擎**: [OpenList](https://github.com/OpenListTeam/OpenList)(Alist 社区延续版),支持百度、阿里云盘、夸克、UC、天翼、迅雷、移动、123 盘、115、蓝奏云、OneDrive、Google Drive 等,驱动文档见 [doc.oplist.org](https://doc.oplist.org)。
-- **为什么用 Release 而不是 Artifacts**:私有/免费账号的 Artifacts 配额只有 500MB,1GB 文件必挂;Release 附件单文件 2GiB、总量不限、不计配额。
+半分钟后**飞书**收到这个路径下的文件清单(带大小、日期)。想看更深的目录,把路径填具体些再跑一次 list。
 
-## 搭建步骤(10 分钟,全程浏览器操作)
+### ② 下载
 
-### 1. 建仓库
+同样的表单,这次:
 
-把本仓库文件推到你的 GitHub **公开**仓库(或 fork 后改)。必须包含:`.github/workflows/download.yml`、`scripts/bootstrap_storages.py`、`storages.json`。
+```
+│ 操作模式   [ download ▼ ]              │
+│ 路径      [ /baidu/学习资料/高数  ]     │   ← 填文件的完整路径,或它所在的文件夹
+│ 文件名过滤 [ *.pdf          ]  ← 可选   │
+```
 
-### 2. 挑网盘,取凭证,配 Secrets
+跑完**飞书**收到 ✅ + Release 链接。单文件上限 1G,超出会被跳过。
 
-仓库 → Settings → Secrets and variables → Actions → New repository secret。
-**必配**:
+### ③ 取回文件
+
+- 网页:点飞书里的 Release 链接(私有仓库会要求先登录 GitHub)→ Assets 里点文件下载
+- 命令:`gh release download --repo 你的用户名/netdisk-actions --dir D:\下载`(会自动选最新)
+- **手机**:装 GitHub 官方 App,一样能触发 workflow、一样能下载附件
+
+## 搭建步骤(新机器部署,约 10 分钟)
+
+1. 把本仓库文件推到一个新仓库(公开/私有均可;私有有 2000 分钟/月的 Actions 配额,本用量足够)
+2. 配 Secrets(Settings → Secrets and variables → Actions):
 
 | Secret 名 | 说明 |
 |---|---|
-| `OPENLIST_ADMIN_PASS` | 随便一个强密码,内部通信用,不外泄 |
+| `OPENLIST_ADMIN_PASS` | 随机强密码即可,内部通信用 |
 | `FEISHU_WEBHOOK` | 飞书自定义机器人 webhook 地址 |
+| `REPO_PAT` | 一个对本仓库有管理权限的 PAT(用于回写轮换令牌) |
+| `BAIDU_REFRESH_TOKEN` | 百度,用 [OpenList Token 工具](https://api.oplist.org) 授权获取"刷新令牌" |
+| `QUARK_COOKIE` 等 | 夸克/UC/天翼/迅雷/123/115 的网页 cookie,蓝奏云账密,字段见 `storages.json` |
 
-**网盘(配哪几个就能用哪几个,没配的自动跳过)**:
+3. 各驱动字段名以 [doc.oplist.org](https://doc.oplist.org) 为准;挂载失败时 Actions 日志会列出可用驱动名
 
-| Secret 名 | 去哪拿 | 对应挂载名 |
-|---|---|---|
-| `QUARK_COOKIE` | 夸克网页版 pan.quark.cn → F12 → 应用 → Cookies,复制 `__pus` 等整段 cookie 值 | `/quark` |
-| `UC_COOKIE` | UC 网盘网页版,同上 | `/uc` |
-| `ALIYUN_REFRESH_TOKEN` | 阿里云盘,用官方文档的获取工具(见 doc.oplist.org 阿里云盘 Open 驱动页) | `/aliyun` |
-| `BAIDU_REFRESH_TOKEN` | 百度网盘,文档提供的 refresh_token 获取方式 | `/baidu` |
-| `CLOUD189_COOKIE` | 天翼云盘网页版 F12 取 cookie | `/cloud189` |
-| `XUNLEI_COOKIE` | 迅雷云盘网页版 F12 取 cookie | `/xunlei` |
-| `PAN123_TOKEN` | 123 云盘,见文档 | `/123pan` |
-| `PAN115_COOKIE` | 115 网页版 F12 取 cookie | `/115` |
-| `LANZOU_USER` / `LANZOU_PASS` | 蓝奏云账号密码 | `/lanzou` |
+## 令牌轮换机制(百度/阿里用户必读)
 
-> cookie 的具体字段名以 [doc.oplist.org](https://doc.oplist.org) 各驱动文档为准;如果某个网盘挂载失败,Actions 日志里会列出所有可用驱动名和报错原因,照着改 `storages.json` 即可。
+百度、阿里的 `refresh_token` 是**一次性**的:每次用它换取 access_token 后就作废,新令牌由 OpenList 写进数据库。本项目的处理:
 
-### 3. 触发
+1. 每次运行挂载完成后,`bootstrap_storages.py` 立即比对数据库里的最新令牌与 Secret 原值
+2. 有变化 → 加密(PyNaCl sealed box)回写到对应 Secret(靠 `REPO_PAT`)
+3. 任务结束还有一次兜底回写;`concurrency` 锁保证不会有两个运行同时消耗令牌
 
-Actions → 网盘下载 → Run workflow:
-- `path`:如 `/quark/资源/某文件夹`(挂载名见上表)
-- `include`:可选,如 `*.mkv`,留空 = 全部
+所以:**授权一次,之后全自动**。cookie 类网盘(夸克/天翼/迅雷等)令牌不轮换,过期才需要手动换 Secret。
 
-## 日常使用
+## 维护
 
-1. 看到好的网盘分享 → 用网盘 App **转存到自己账号**(手机上 10 秒)
-2. 触发 workflow,填路径
-3. 飞书收到 ✅ 通知
-4. 什么时候想下载了再取:
+- 某网盘 ❌ 且日志显示 `expired_token`/`refresh token has been used` → 回写失败了(比如 REPO_PAT 失效),重新授权拿新令牌更新对应 Secret 即可
+- cookie 类网盘失败 → 浏览器重新取 cookie → 更新对应 Secret
+- 修改要下载行为(如 1G 上限)→ 改 `.github/workflows/download.yml`
 
-```powershell
-# 方式一:浏览器登录 GitHub,进仓库 Releases 页点文件
-# 方式二:gh 命令(国内通常更快)
-gh release download dl-20261115-xxxx --repo 你的用户名/仓库名 --dir D:\下载
-```
+## 已知限制与风险
 
-## 维护:cookie 过期了怎么办
+- 单文件上限 1G(`--max-size 1G`);Release 单文件上限 2GiB;runner 磁盘约 14G
+- 速度看账号:百度非会员直链慢(机房 IP 更明显);阿里/夸克/123/天翼一般较快。不破解任何限速
+- 私有仓库注意 Actions 分钟数(2000/月,账号级共享);慢速大文件一次最多吃 120 分钟(超时保护)
+- 网盘风控偶尔会拒绝机房 IP,重跑通常就好
+- 每次 OpenList 都是全新实例 + 动态挂载,`OPENLIST_ADMIN_PASSWORD` 环境变量完成初始化(v4 机制)
 
-某网盘全部失败(飞书 ❌)→ 大概率 cookie 过期:浏览器重新取一次 cookie → Settings → Secrets 里更新对应值。**不需要跑任何本地程序。**
+## 后续可扩展
 
-## 隐私与安全设计
-
-- 仓库内**没有任何真实凭证**:`storages.json` 只有 `env:SECRET名` 占位;密码/cookie 全在 Encrypted Secrets
-- 运行日志调低了级别,**不会打印文件名**;文件清单只发到你的飞书(私密)
-- Actions 日志在公开仓库人人可看,但里面只有挂载名和统计数字
-- 飞书 webhook、OpenList 管理密码均为 Secret
-
-## 已知限制与风险(务必知情)
-
-- **单文件上限 1G**(`--max-size 1G`,可在 workflow 里改);Release 单文件上限 2GiB;runner 磁盘约 14G
-- **速度看账号**:百度非会员直链照样限速,夸克非会员有限额;阿里/天翼/123 一般较快。本方案不破解任何限速
-- **GitHub ToS 灰色地带**:官方禁止把 Actions 用于与软件开发无关的大流量活动。小体积 + 低频使用风险低,别拿它当常驻下载站,别改成高频定时
-- **数据中心 IP 风控**:Actions 的 IP 段偶尔被网盘风控,表现为某次解析失败,重跑通常就好;介意可用小号 cookie
-- 每次运行都是全新 OpenList 实例 + 动态挂载,若 OpenList 大版本改了驱动 API,`bootstrap_storages.py` 需要跟进(锁了版本 `v4.2.9`,不受影响)
-
-## 后续可扩展(本期未做)
-
-- 分享链接自动转存:夸克可接 [Cp0204/quark-auto-save](https://github.com/Cp0204/quark-auto-save),省掉手动转存一步
-- `repository_dispatch` webhook 触发:配合其他自动化,POST 一下就跑
+- 分享链接自动转存:夸克可接 [Cp0204/quark-auto-save](https://github.com/Cp0204/quark-auto-save)
+- `repository_dispatch` webhook 触发,配合其他自动化
