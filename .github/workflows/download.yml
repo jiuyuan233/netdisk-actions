@@ -33,6 +33,16 @@ jobs:
         env:
           OPENLIST_ADMIN_PASS: ${{ secrets.OPENLIST_ADMIN_PASS }}
           OPENLIST_ADMIN_PASSWORD: ${{ secrets.OPENLIST_ADMIN_PASS }}
+          QUARK_COOKIE: ${{ secrets.QUARK_COOKIE }}
+          UC_COOKIE: ${{ secrets.UC_COOKIE }}
+          ALIYUN_REFRESH_TOKEN: ${{ secrets.ALIYUN_REFRESH_TOKEN }}
+          BAIDU_REFRESH_TOKEN: ${{ secrets.BAIDU_REFRESH_TOKEN }}
+          CLOUD189_COOKIE: ${{ secrets.CLOUD189_COOKIE }}
+          XUNLEI_COOKIE: ${{ secrets.XUNLEI_COOKIE }}
+          PAN123_TOKEN: ${{ secrets.PAN123_TOKEN }}
+          PAN115_COOKIE: ${{ secrets.PAN115_COOKIE }}
+          LANZOU_USER: ${{ secrets.LANZOU_USER }}
+          LANZOU_PASS: ${{ secrets.LANZOU_PASS }}
         run: |
           mkdir -p run
           (cd run && nohup openlist server > openlist.log 2>&1 &)
