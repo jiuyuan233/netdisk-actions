@@ -1,0 +1,12 @@
+name: probe5
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OPENLIST_VERSION: v4.2.9
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "$OPENLIST_VERSION"

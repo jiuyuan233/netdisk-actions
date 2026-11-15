@@ -1,0 +1,64 @@
+name: probe4
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OPENLIST_VERSION: v4.2.9
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装并启动 OpenList,挂载 Secrets 里的网盘
+        env:
+          OPENLIST_ADMIN_PASS: ${{ secrets.OPENLIST_ADMIN_PASS }}
+        run: |
+          curl -sL "https://github.com/OpenListTeam/OpenList/releases/download/${OPENLIST_VERSION}/openlist-linux-amd64.tar.gz" | tar xz -C /usr/local/bin
+          curl -s https://rclone.org/install.sh | sudo bash
+          mkdir -p run
+          (cd run && openlist admin set "$OPENLIST_ADMIN_PASS")
+          (cd run && nohup openlist server > openlist.log 2>&1 &)
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:5244/ping > /dev/null; then ok=1; break; fi
+            sleep 2
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::error::OpenList 启动失败"
+            cat run/openlist.log
+            exit 1
+          fi
+          python3 scripts/bootstrap_storages.py
+
+      - name: 配置 rclone
+        env:
+          OPENLIST_ADMIN_PASS: ${{ secrets.OPENLIST_ADMIN_PASS }}
+        run: |
+          mkdir -p ~/.config/rclone
+          {
+            echo "[alist]"
+            echo "type = webdav"
+            echo "url = http://127.0.0.1:5244/dav"
+            echo "vendor = other"
+            echo "user = admin"
+            echo "pass = $(rclone obscure "${OPENLIST_ADMIN_PASS}")"
+          } > ~/.config/rclone/rclone.conf
+
+      - name: 列出挂载的网盘目录(清单发飞书,不进公开日志)
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+        run: |
+          rclone lsf "alist:/" --max-depth "${{ inputs.depth }}" > listing.txt || true
+          n=$(grep -c . listing.txt || true)
+          if [ "$n" = "0" ]; then
+            TEXT="🔍 挂载测试:网盘能连上,但没列到内容(可能网盘是空的,或路径/权限问题)"
+          else
+            TEXT="🔍 挂载测试成功,列到 ${n} 个条目:
+$(head -c 2500 listing.txt)"
+          fi
+          jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
+            | curl -s -X POST "${FEISHU_WEBHOOK}" \
+                -H "Content-Type: application/json" -d @-
+
+# touch: force workflow re-index
