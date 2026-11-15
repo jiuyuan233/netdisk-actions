@@ -39,7 +39,7 @@ concurrency:
 jobs:
   download:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
     env:
       OPENLIST_VERSION: v4.2.9
       OPENLIST_ADMIN_PASS: ${{ secrets.OPENLIST_ADMIN_PASS }}
@@ -150,18 +150,33 @@ jobs:
             fi
           fi
 
-      - name: 从网盘下载文件
+      - name: 从网盘下载文件(aria2 多线程直链,失败回退 rclone)
         if: ${{ inputs.mode == 'download' }}
         run: |
           mkdir -p out
-          args=(copy "alist:${{ inputs.path }}" out/ --max-size 1G --transfers 4 --retries 2 \
-                --log-level NOTICE --stats-one-line --stats 60s)
-          if [ -n "${{ inputs.include }}" ]; then
-            args+=(--include "${{ inputs.include }}")
+          (sudo apt-get install -y aria2 > /dev/null 2>&1 || true)
+          OL=$(curl -s -X POST http://127.0.0.1:5244/api/auth/login -H "Content-Type: application/json" -d "{\"username\":\"admin\",\"password\":\"$OPENLIST_ADMIN_PASS\"}" | jq -r .data.token)
+          INFO=$(curl -s -X POST http://127.0.0.1:5244/api/fs/get -H "Authorization: $OL" -H "Content-Type: application/json" -d "{\"path\":\"${{ inputs.path }}\"}")
+          RAW_URL=$(echo "$INFO" | jq -r '.data.raw_url // empty')
+          echo "直链: ${RAW_URL:0:60}..."
+          OK=0
+          if [ -n "$RAW_URL" ]; then
+            UA=$(echo "$INFO" | jq -r '.data.header["User-Agent"] // .data.header["user-agent"] // empty')
+            A=(-x 16 -s 16 -k 4M --file-allocation=none --console-log-level=warn --summary-interval=60 -d out -o dl.bin)
+            if [ -n "$UA" ]; then A+=(--header "User-Agent: $UA"); fi
+            if aria2c "${A[@]}" "$RAW_URL"; then
+              mv out/dl.bin "out/$(basename "${{ inputs.path }}")" && OK=1
+            fi
           fi
-          rclone "${args[@]}"
+          if [ "$OK" != 1 ]; then
+            echo "== aria2 未成功,回退 rclone 单线程 =="
+            rm -f out/dl.bin
+            args=(copy "alist:${{ inputs.path }}" out/ --max-size 2G --transfers 4 --retries 2 --log-level NOTICE --stats-one-line --stats 60s)
+            if [ -n "${{ inputs.include }}" ]; then args+=(--include "${{ inputs.include }}"); fi
+            rclone "${args[@]}"
+          fi
           if [ -z "$(ls -A out/)" ]; then
-            echo "::error::没有下载到任何文件(检查路径是否正确、是否有超过 1G 的文件被 --max-size 跳过)"
+            echo "::error::没有下载到任何文件(路径不对、文件超过上限、或直链获取失败)"
             exit 1
           fi
 
