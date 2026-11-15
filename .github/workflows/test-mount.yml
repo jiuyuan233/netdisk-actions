@@ -62,13 +62,10 @@ jobs:
           rclone lsf "alist:/" --max-depth "${{ inputs.depth }}" > listing.txt || true
           n=$(grep -c . listing.txt || true)
           if [ "$n" = "0" ]; then
-            TEXT="🔍 挂载测试:网盘能连上,但没列到内容(可能网盘是空的,或路径/权限问题)"
+            TEXT=$(printf '🔍 挂载测试:网盘能连上,但没列到内容(可能网盘是空的,或路径/权限问题)')
           else
-            TEXT="🔍 挂载测试成功,列到 ${n} 个条目:
-$(head -c 2500 listing.txt)"
+            TEXT=$(printf '🔍 挂载测试成功,列到 %s 个条目:\n%s' "$n" "$(head -c 2500 listing.txt)")
           fi
           jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
             | curl -s -X POST "${FEISHU_WEBHOOK}" \
                 -H "Content-Type: application/json" -d @-
-
-# touch: force workflow re-index

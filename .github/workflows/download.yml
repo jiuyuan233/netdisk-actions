@@ -108,17 +108,10 @@ jobs:
           SRC_PATH: ${{ inputs.path }}
         run: |
           if [ "$STATUS" = "success" ]; then
-            TEXT="✅ 网盘下载完成
-来源路径: ${SRC_PATH}
-$(ls -lh out/ | tail -n +2)
-文件下载: ${RELEASE_URL}"
+            TEXT=$(printf '✅ 网盘下载完成\n来源路径: %s\n%s\n文件下载: %s' "$SRC_PATH" "$(ls -lh out/ | tail -n +2)" "$RELEASE_URL")
           else
-            TEXT="❌ 网盘下载失败
-来源路径: ${SRC_PATH}
-查看日志: ${JOB_URL}"
+            TEXT=$(printf '❌ 网盘下载失败\n来源路径: %s\n查看日志: %s' "$SRC_PATH" "$JOB_URL")
           fi
           jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
             | curl -s -X POST "${FEISHU_WEBHOOK}" \
                 -H "Content-Type: application/json" -d @-
-
-# touch: force workflow re-index
