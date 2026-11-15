@@ -170,15 +170,16 @@ jobs:
           SRC_PATH: ${{ steps.src.outputs.full }}
         run: |
           PASS=1
-          TESTDIR="${SRC_PATH}/selftest-$(date +%H%M%S)"
+          # 注意:百度驱动不能创建新目录(mkParentDir 403),探针文件必须放进已存在的目录
+          TESTFILE="selftest-$(date +%H%M%S).txt"
           echo "netdisk-actions selftest $(date -u +%FT%TZ)" > selftest.txt
-          echo "[1/5] 上传探针文件到 ${TESTDIR}/ ..."
-          rclone copy selftest.txt "alist:${TESTDIR}/" --log-level ERROR || PASS=0
+          echo "[1/5] 上传探针文件到 ${SRC_PATH}/${TESTFILE} ..."
+          rclone copyto selftest.txt "alist:${SRC_PATH}/${TESTFILE}" --log-level ERROR || PASS=0
           echo "[2/5] 列表验证 ..."
-          rclone lsl "alist:${TESTDIR}/" --log-level ERROR | grep -q selftest.txt || PASS=0
+          rclone lsl "alist:${SRC_PATH}/" --log-level ERROR | grep -q "$TESTFILE" || PASS=0
           echo "[3/5] 取直链并回源下载 ..."
           OL=$(curl -s -X POST http://127.0.0.1:5244/api/auth/login -H "Content-Type: application/json" -d "{\"username\":\"admin\",\"password\":\"$OPENLIST_ADMIN_PASS\"}" | jq -r .data.token)
-          RAW=$(jq -n --arg p "${TESTDIR}/selftest.txt" '{path:$p}' \
+          RAW=$(jq -n --arg p "${SRC_PATH}/${TESTFILE}" '{path:$p}' \
             | curl -s -X POST http://127.0.0.1:5244/api/fs/get -H "Authorization: $OL" -H "Content-Type: application/json" -d @- \
             | jq -r '.data.raw_url // empty')
           mkdir -p back
@@ -186,12 +187,12 @@ jobs:
             aria2c -q --allow-overwrite=true -d back -o selftest.txt "$RAW" || PASS=0
           else
             echo "未取得直链,回退 rclone 下载"
-            rclone copy "alist:${TESTDIR}/" back/ --log-level ERROR || PASS=0
+            rclone copyto "alist:${SRC_PATH}/${TESTFILE}" back/selftest.txt --log-level ERROR || PASS=0
           fi
           echo "[4/5] 内容比对 ..."
           diff -q selftest.txt back/selftest.txt > /dev/null 2>&1 || PASS=0
-          echo "[5/5] 清理网盘探针目录 ..."
-          rclone purge "alist:${TESTDIR}/" --log-level ERROR || true
+          echo "[5/5] 清理网盘探针文件 ..."
+          rclone deletefile "alist:${SRC_PATH}/${TESTFILE}" --log-level ERROR || true
           if [ "$PASS" = 1 ]; then
             TEXT=$(printf '🧪 自检通过:上传/列表/直链下载/内容比对 全部 OK(网盘=%s,路径=%s)' "${{ inputs.netdisk }}" "$SRC_PATH")
           else
