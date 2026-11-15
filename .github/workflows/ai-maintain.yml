@@ -1,0 +1,73 @@
+name: AI 维护
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "给 AI 的维护任务描述(例:检查并升级 OpenList 版本号;修复 xxx 报错)"
+        required: true
+        type: string
+      model:
+        description: "模型名(OpenAI 兼容接口)"
+        required: false
+        default: "gpt-4o-mini"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: netdisk
+  cancel-in-progress: false
+
+jobs:
+  maintain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AI_API_BASE: ${{ secrets.AI_API_BASE }}
+      AI_API_KEY: ${{ secrets.AI_API_KEY }}
+      AI_MODEL: ${{ inputs.model }}
+      TASK: ${{ inputs.task }}
+      FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AI 分析并修改文件
+        id: ai
+        run: python3 scripts/ai_maintain.py
+
+      - name: 创建 PR
+        if: ${{ steps.ai.outputs.state == 'pr' }}
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BR="${{ steps.ai.outputs.branch }}"
+          PR_URL=$(gh pr create --base main --head "$BR" \
+            --title "🤖 AI 维护:${{ steps.ai.outputs.summary }}" \
+            --body "任务:${{ inputs.task }}
+由 AI 维护流程自动生成,**请人工审核后合并**。合并前建议本地或 Actions 里跑一次 list 模式验证。" \
+            --repo "${{ github.repository }}")
+          echo "url=$PR_URL" >> "$GITHUB_OUTPUT"
+          echo "PR: $PR_URL"
+
+      - name: 飞书通知
+        if: always()
+        env:
+          STATUS: ${{ job.status }}
+          PR_URL: ${{ steps.pr.outputs.url }}
+          TASK: ${{ inputs.task }}
+          SUMMARY: ${{ steps.ai.outputs.summary }}
+          JOB_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$STATUS" = "success" ] && [ -n "$PR_URL" ]; then
+            TEXT=$(printf '🤖 AI 维护完成,已开 PR 待审核\n任务: %s\n改动: %s\n审核: %s' "$TASK" "$SUMMARY" "$PR_URL")
+          elif [ "$STATUS" = "success" ]; then
+            TEXT=$(printf '🤖 AI 维护完成:无需修改文件\n任务: %s\n说明: %s' "$TASK" "$SUMMARY")
+          else
+            TEXT=$(printf '❌ AI 维护失败\n任务: %s\n日志: %s' "$TASK" "$JOB_URL")
+          fi
+          jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
+            | curl -s -X POST "${FEISHU_WEBHOOK}" \
+                -H "Content-Type: application/json" -d @- > /dev/null

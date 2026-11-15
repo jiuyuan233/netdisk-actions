@@ -11,6 +11,7 @@ on:
         options:
           - "download"
           - "list"
+          - "selftest"
       netdisk:
         description: "网盘(与 storages.json 挂载名一致,未配置 Secret 的会被跳过)"
         required: false
@@ -38,11 +39,6 @@ on:
         description: "list 模式的目录深度(1=只看当前层)"
         required: false
         default: "1"
-      probe:
-        description: "附加诊断(注意:诊断输出含文件名,公开仓库可见)"
-        required: false
-        default: "false"
-        type: boolean
       attempt:
         description: "自动续传轮数(内部用,不用填)"
         required: false
@@ -167,6 +163,44 @@ jobs:
             | curl -s -X POST "${FEISHU_WEBHOOK}" \
                 -H "Content-Type: application/json" -d @- > /dev/null
           echo "== 目录清单 共${n}项(明细已发飞书,公开日志不显示文件名)=="
+
+      - name: 自检(上传→列表→直链下载→比对→清理)
+        if: ${{ inputs.mode == 'selftest' }}
+        env:
+          SRC_PATH: ${{ steps.src.outputs.full }}
+        run: |
+          PASS=1
+          TESTDIR="${SRC_PATH}/selftest-$(date +%H%M%S)"
+          echo "netdisk-actions selftest $(date -u +%FT%TZ)" > selftest.txt
+          echo "[1/5] 上传探针文件到 ${TESTDIR}/ ..."
+          rclone copy selftest.txt "alist:${TESTDIR}/" --log-level ERROR || PASS=0
+          echo "[2/5] 列表验证 ..."
+          rclone lsl "alist:${TESTDIR}/" --log-level ERROR | grep -q selftest.txt || PASS=0
+          echo "[3/5] 取直链并回源下载 ..."
+          OL=$(curl -s -X POST http://127.0.0.1:5244/api/auth/login -H "Content-Type: application/json" -d "{\"username\":\"admin\",\"password\":\"$OPENLIST_ADMIN_PASS\"}" | jq -r .data.token)
+          RAW=$(jq -n --arg p "${TESTDIR}/selftest.txt" '{path:$p}' \
+            | curl -s -X POST http://127.0.0.1:5244/api/fs/get -H "Authorization: $OL" -H "Content-Type: application/json" -d @- \
+            | jq -r '.data.raw_url // empty')
+          mkdir -p back
+          if [ -n "$RAW" ]; then
+            aria2c -q --allow-overwrite=true -d back -o selftest.txt "$RAW" || PASS=0
+          else
+            echo "未取得直链,回退 rclone 下载"
+            rclone copy "alist:${TESTDIR}/" back/ --log-level ERROR || PASS=0
+          fi
+          echo "[4/5] 内容比对 ..."
+          diff -q selftest.txt back/selftest.txt > /dev/null 2>&1 || PASS=0
+          echo "[5/5] 清理网盘探针目录 ..."
+          rclone purge "alist:${TESTDIR}/" --log-level ERROR || true
+          if [ "$PASS" = 1 ]; then
+            TEXT=$(printf '🧪 自检通过:上传/列表/直链下载/内容比对 全部 OK(网盘=%s,路径=%s)' "${{ inputs.netdisk }}" "$SRC_PATH")
+          else
+            TEXT=$(printf '❌ 自检失败:某环节未通过(网盘=%s,路径=%s),查看日志定位' "${{ inputs.netdisk }}" "$SRC_PATH")
+          fi
+          jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
+            | curl -s -X POST "${FEISHU_WEBHOOK}" -H "Content-Type: application/json" -d @- > /dev/null
+          echo "自检结论: $([ "$PASS" = 1 ] && echo PASS || echo FAIL)"
+          [ "$PASS" = 1 ] || exit 1
 
       - name: 从网盘下载文件(aria2 分段续传,失败回退 rclone)
         id: dl
