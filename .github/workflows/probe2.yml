@@ -1,0 +1,13 @@
+name: probe2
+on:
+  workflow_dispatch:
+    inputs:
+      depth:
+        description: "d"
+        required: false
+        default: "1"
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
