@@ -1,0 +1,122 @@
+name: 网盘下载
+
+on:
+  workflow_dispatch:
+    inputs:
+      path:
+        description: "OpenList 挂载路径,如 /quark/资源/某文件夹"
+        required: true
+        type: string
+      include:
+        description: "文件名过滤(可选,通配符,如 *.mkv;留空=全部)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OPENLIST_VERSION: v4.2.9
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 OpenList 和 rclone
+        run: |
+          curl -sL "https://github.com/OpenListTeam/OpenList/releases/download/${OPENLIST_VERSION}/openlist-linux-amd64.tar.gz" | tar xz -C /usr/local/bin
+          curl -s https://rclone.org/install.sh | sudo bash
+
+      - name: 启动 OpenList 并挂载网盘(Secrets 中的 cookie)
+        env:
+          OPENLIST_ADMIN_PASS: ${{ secrets.OPENLIST_ADMIN_PASS }}
+          OPENLIST_ADMIN_USER: ${{ secrets.OPENLIST_ADMIN_USER }}
+        run: |
+          mkdir -p run
+          (cd run && openlist admin set "$OPENLIST_ADMIN_PASS")
+          (cd run && nohup openlist server > openlist.log 2>&1 &)
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:5244/ping > /dev/null; then ok=1; break; fi
+            sleep 2
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::error::OpenList 启动失败"
+            cat run/openlist.log
+            exit 1
+          fi
+          python3 scripts/bootstrap_storages.py
+
+      - name: 写入 rclone 配置
+        env:
+          OPENLIST_ADMIN_PASS: ${{ secrets.OPENLIST_ADMIN_PASS }}
+          OPENLIST_ADMIN_USER: ${{ secrets.OPENLIST_ADMIN_USER }}
+        run: |
+          mkdir -p ~/.config/rclone
+          {
+            echo "[alist]"
+            echo "type = webdav"
+            echo "url = http://127.0.0.1:5244/dav"
+            echo "vendor = other"
+            echo "user = ${OPENLIST_ADMIN_USER:-admin}"
+            echo "pass = $(rclone obscure "${OPENLIST_ADMIN_PASS}")"
+          } > ~/.config/rclone/rclone.conf
+
+      - name: 清理旧的下载 Release(保留最近 5 个)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/releases" --paginate --jq '.[].tag_name' \
+            | grep '^dl-' | tail -n +6 \
+            | xargs -r -I{} gh release delete "{}" --yes --cleanup-tag
+
+      - name: 从网盘下载文件
+        run: |
+          mkdir -p out
+          args=(copy "alist:${{ inputs.path }}" out/ --max-size 1G --transfers 4 --retries 2 \
+                --log-level NOTICE --stats-one-line --stats 60s)
+          if [ -n "${{ inputs.include }}" ]; then
+            args+=(--include "${{ inputs.include }}")
+          fi
+          rclone "${args[@]}"
+          if [ -z "$(ls -A out/)" ]; then
+            echo "::error::没有下载到任何文件(检查路径是否正确、是否有超过 1G 的文件被 --max-size 跳过)"
+            exit 1
+          fi
+
+      - name: 上传到 Release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="dl-$(date +%Y%m%d-%H%M%S)"
+          gh release create "$TAG" out/* \
+            --title "网盘下载 $TAG" \
+            --notes "来源路径: \`${{ inputs.path }}\`" --latest
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: 飞书通知
+        if: always()
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          STATUS: ${{ job.status }}
+          RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ steps.release.outputs.tag }}
+          JOB_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SRC_PATH: ${{ inputs.path }}
+        run: |
+          if [ "$STATUS" = "success" ]; then
+            TEXT="✅ 网盘下载完成
+来源路径: ${SRC_PATH}
+$(ls -lh out/ | tail -n +2)
+文件下载: ${RELEASE_URL}"
+          else
+            TEXT="❌ 网盘下载失败
+来源路径: ${SRC_PATH}
+查看日志: ${JOB_URL}"
+          fi
+          jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
+            | curl -s -X POST "${FEISHU_WEBHOOK}" \
+                -H "Content-Type: application/json" -d @-
