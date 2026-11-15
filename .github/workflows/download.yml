@@ -23,6 +23,11 @@ on:
         description: "list 模式的目录深度(1=只看当前层)"
         required: false
         default: "1"
+      probe:
+        description: "上传探针文件,探测百度应用目录名(一般不勾)"
+        required: false
+        default: "false"
+        type: boolean
 
 permissions:
   contents: write
@@ -102,6 +107,11 @@ jobs:
         env:
           SRC_PATH: ${{ inputs.path }}
         run: |
+          if [ "${{ inputs.probe }}" = "true" ]; then
+            echo "probe" > /tmp/probe.txt
+            rclone copy /tmp/probe.txt "alist:${{ inputs.path }}/" --log-level INFO 2>&1 | tail -5
+            echo "探针文件已上传到 ${{ inputs.path }}"
+          fi
           rclone lsl "alist:${{ inputs.path }}" --max-depth "${{ inputs.depth }}" > listing.txt 2> listing.err || true
           n=$(grep -c . listing.txt || true)
           if [ "$n" = "0" ]; then
