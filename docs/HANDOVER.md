@@ -14,8 +14,8 @@
 | 大文件断点续传 + 自动接力 | ✅ 已上线(未实测触发) | cache 存半成品+aria2 控制文件,190min 软超时,自动排队下一轮(上限 10 轮) |
 | 令牌轮换自动回写(百度/阿里) | ✅ 可用 | 已两次验证自动回写;**重要**:百度/阿里 refresh_token 是一次性的 |
 | 飞书通知 | ✅ 可用 | list/download/自检/AI 维护都有通知 |
-| 自检模式(一键全链路验证) | ✅ 已上线 | 上传→列表→直链回源下载→字节比对→清理,约 2 分钟 |
-| AI 维护流程(Actions 里调大模型改仓库开 PR) | ✅ 已上线 | 见第 6 节,需 Secret `AI_API_KEY` |
+| 自检模式(一键只读验证) | ✅ 可用 | run 43721397568:列表/取直链/分段拉取 64KB 全通过,不写网盘 |
+| AI 维护流程(Actions 里调大模型改仓库开 PR) | ⚠️ 已上线待复测 | 全链路已实现,实测在 Cloudflare 1010(已修 UA),**下一 AI 接手后先复测一次** |
 | 已下载样例 | 868MB 高数 zip | Release `dl-20261115-111930`(**已转草稿**,公开不可见,登录后可见) |
 
 **当前唯一挂载的网盘:百度**(`BAIDU_REFRESH_TOKEN`)。其他 8 个网盘的配置已就位,配了 Secret 即用(见 `docs/网盘配置教程.md`)。
@@ -73,14 +73,17 @@
 12. **本地直连 github.com:443 被墙**:git push 用 SSH over 443(ssh.github.com,临时密钥用完即删);api.github.com 直连正常。Actions runner 出海无此问题。
 13. **Api 创建的 workflow 文件可能不注册 dispatch 触发器**,真 git push 一次即恢复。
 14. **Workflow dispatch 表单回显会泄露 input 值**(如子路径),公开日志里能看到你填的路径——这是 GitHub 行为,属可接受范围,介意就删运行记录。
+15. **百度 OpenList 官方应用是只读 scope**:列表/下载正常,但上传、创建目录全部 403(mkParentDir/unchunked update)。所以 selftest 是只读模式,任何"往百度传文件"的功能都不可行。
+16. **ChatAnywhere 等 Cloudflare 站点会拦非浏览器 UA**(error 1010):脚本请求必须带正常 User-Agent。
+17. **顶格续行坑出现了三次**(两次 hand-write,一次本人),说明靠自觉不行——提交前跑:`grep -nP '^\S' <workflow> | grep -vP '(name|on|permissions|concurrency|jobs):'`,有输出就是断了。
 
 ## 6. 验证手册(改完任何东西,按顺序跑)
 
 1. **语法**:推送后看 Actions 里 workflow 名是否正常显示(若显示为文件路径 = YAML 解析失败);dispatch 是否 422。
-2. **一键自检**:Run workflow → 模式 `selftest`、网盘选已配置的、子路径留空 → 约 2 分钟 → 飞书收 🧪 自检通过(覆盖:挂载/上传/列表/直链下载/字节比对/清理)。
+2. **一键自检**:Run workflow → 模式 `selftest`、网盘选已配置的、子路径填文件夹或留空 → 约 2 分钟 → 飞书收 🧪(只读验证:挂载/列表/直链/分段拉取)。
 3. **list 冒烟**:模式 `list`、子路径填个文件夹 → 飞书收目录清单。
 4. **下载 e2e**:挑个小文件(≤100MB)跑 `download` → 飞书收 ✅ + Release 链接 → 下载文件核对大小。
-5. **AI 维护**:见下节,给个无害任务(如"检查文档错别字")→ 应开出 PR。
+5. **AI 维护**:给个无害任务(如"检查两份文档关于大小上限的表述是否一致")→ 应开出 PR。⚠️ **接手后第一件事:复测 AI 维护**——上一轮实测被 Cloudflare 1010 拦截,已修 UA 但未复测。
 
 ## 7. AI 维护流程(让 Actions 里的 AI 更新这个仓库)
 
