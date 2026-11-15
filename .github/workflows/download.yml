@@ -236,10 +236,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # GitHub 资产名不支持非 ASCII(会被改成 default.zip):含非 ASCII 的文件改用安全名,原名写进说明
+          NAMES=""
+          for f in out/*; do
+            base=$(basename "$f")
+            if printf '%s' "$base" | LC_ALL=C grep -q '[^ -~]'; then
+              ext="${base##*.}"; case "$ext" in "$base") ext="";; esac
+              safe="dl-$(printf '%s' "$base" | md5sum | cut -c1-8)${ext:+.$ext}"
+              mv "$f" "out/$safe"
+              NAMES="$NAMES
+- $base → $safe"
+            fi
+          done
           TAG="dl-$(date +%Y%m%d-%H%M%S)"
           gh release create "$TAG" out/* \
             --title "网盘下载 $TAG" \
-            --notes "来源路径: \`${{ inputs.path }}\`" --latest
+            --notes "来源路径: \`${{ inputs.path }}\`$NAMES" --latest
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: 清理已完成的进度缓存
