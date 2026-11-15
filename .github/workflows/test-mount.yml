@@ -70,3 +70,5 @@ $(head -c 2500 listing.txt)"
           jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
             | curl -s -X POST "${FEISHU_WEBHOOK}" \
                 -H "Content-Type: application/json" -d @-
+
+# touch: force workflow re-index
