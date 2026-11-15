@@ -35,7 +35,6 @@ jobs:
           OPENLIST_ADMIN_USER: ${{ secrets.OPENLIST_ADMIN_USER }}
         run: |
           mkdir -p run
-          (cd run && openlist admin set "$OPENLIST_ADMIN_PASS")
           (cd run && nohup openlist server > openlist.log 2>&1 &)
           ok=0
           for i in $(seq 1 60); do
@@ -47,6 +46,7 @@ jobs:
             cat run/openlist.log
             exit 1
           fi
+          (cd run && openlist admin set "$OPENLIST_ADMIN_PASS") > /dev/null 2>&1
           python3 scripts/bootstrap_storages.py
 
       - name: 写入 rclone 配置

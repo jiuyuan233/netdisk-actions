@@ -27,7 +27,6 @@ jobs:
           curl -sL "https://github.com/OpenListTeam/OpenList/releases/download/${OPENLIST_VERSION}/openlist-linux-amd64.tar.gz" | tar xz -C /usr/local/bin
           curl -s https://rclone.org/install.sh | sudo bash
           mkdir -p run
-          (cd run && openlist admin set "$OPENLIST_ADMIN_PASS")
           (cd run && nohup openlist server > openlist.log 2>&1 &)
           ok=0
           for i in $(seq 1 60); do
@@ -39,6 +38,8 @@ jobs:
             cat run/openlist.log
             exit 1
           fi
+          echo "== openlist admin set 输出 =="
+          (cd run && openlist admin set "$OPENLIST_ADMIN_PASS") 2>&1 | tail -5
           python3 scripts/bootstrap_storages.py
 
       - name: 配置 rclone
