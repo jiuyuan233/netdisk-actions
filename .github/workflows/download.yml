@@ -141,6 +141,13 @@ jobs:
               curl -s "https://pan.baidu.com/rest/2.0/xpan/file?method=list&access_token=${AT}&dir=${D}&web=1&limit=100" | head -c 1500
               echo ""
             done
+            echo "== 高数文件测速(5MB 采样) =="
+            DL=$(curl -s "https://pan.baidu.com/rest/2.0/xpan/file?method=filemetas&access_token=${AT}&fsids=%5B770633613038917%5D&dlink=1" | jq -r '.list[0].dlink // empty')
+            if [ -n "$DL" ]; then
+              curl -s -L -A "netdisk" -r 0-5242879 -o /dev/null -w "HTTP %{http_code} | 平均 %{speed_download} B/s | 5MB 用时 %{time_total}s\n" "$DL"
+            else
+              echo "未能取得 dlink"
+            fi
           fi
 
       - name: 从网盘下载文件

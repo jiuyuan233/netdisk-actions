@@ -2,7 +2,7 @@
   { "mount_path": "/quark",    "driver": "Quark",           "fields": { "cookie": "env:QUARK_COOKIE" } },
   { "mount_path": "/uc",       "driver": "UC",              "fields": { "cookie": "env:UC_COOKIE" } },
   { "mount_path": "/aliyun",   "driver": "AliyundriveOpen", "fields": { "refresh_token": "env:ALIYUN_REFRESH_TOKEN" } },
-  { "mount_path": "/baidu",    "driver": "BaiduNetdisk",    "fields": { "refresh_token": "env:BAIDU_REFRESH_TOKEN", "client_id": "NqOMXF6XGhGRIGemsQ9nG0Na", "client_secret": "SVT6xpMdLcx6v4aCR4wT8BBOTbzFO8LM" } },
+  { "mount_path": "/baidu",    "driver": "BaiduNetdisk",    "fields": { "refresh_token": "env:BAIDU_REFRESH_TOKEN", "root_folder_path": "/", "order_by": "name", "order_direction": "asc", "download_api": "official", "use_online_api": false, "client_id": "NqOMXF6XGhGRIGemsQ9nG0Na", "client_secret": "SVT6xpMdLcx6v4aCR4wT8BBOTbzFO8LM" } },
   { "mount_path": "/cloud189", "driver": "Cloud189",        "fields": { "cookie": "env:CLOUD189_COOKIE" } },
   { "mount_path": "/xunlei",   "driver": "Xunlei",          "fields": { "cookie": "env:XUNLEI_COOKIE" } },
   { "mount_path": "/123pan",   "driver": "123Pan",          "fields": { "token": "env:PAN123_TOKEN" } },
