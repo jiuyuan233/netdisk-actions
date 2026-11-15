@@ -3,14 +3,26 @@ name: 网盘下载
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: "操作模式(list=看目录里有什么;download=下载)"
+        required: false
+        default: "download"
+        type: choice
+        options:
+          - download
+          - list
       path:
-        description: "OpenList 挂载路径,如 /quark/资源/某文件夹"
+        description: "OpenList 路径,如 /baidu/学习资料/高数"
         required: true
         type: string
       include:
         description: "文件名过滤(可选,通配符,如 *.mkv;留空=全部)"
         required: false
         default: ""
+      depth:
+        description: "list 模式的目录深度(1=只看当前层)"
+        required: false
+        default: "1"
 
 permissions:
   contents: write
@@ -74,6 +86,7 @@ jobs:
           } > ~/.config/rclone/rclone.conf
 
       - name: 清理旧的下载 Release(保留最近 5 个)
+        if: ${{ inputs.mode == 'download' }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -82,7 +95,28 @@ jobs:
             | grep '^dl-' | tail -n +6 \
             | xargs -r -I{} gh release delete "{}" --yes --cleanup-tag
 
+      - name: 查看目录(list 模式)
+        if: ${{ inputs.mode == 'list' }}
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          SRC_PATH: ${{ inputs.path }}
+        run: |
+          rclone lsl "alist:${{ inputs.path }}" --max-depth "${{ inputs.depth }}" > listing.txt 2> listing.err || true
+          n=$(grep -c . listing.txt || true)
+          if [ "$n" = "0" ]; then
+            TEXT=$(printf '📂 %s:没列到内容(路径不对或为空)。错误:%s' "${SRC_PATH}" "$(head -c 200 listing.err)")
+          else
+            TEXT=$(printf '📂 %s 下共 %s 项(格式:大小 日期 文件名):\n%s' "${SRC_PATH}" "$n" "$(head -c 2500 listing.txt)")
+          fi
+          jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
+            | curl -s -X POST "${FEISHU_WEBHOOK}" \
+                -H "Content-Type: application/json" -d @-
+          echo "== 目录清单 共${n}项 =="
+          cat listing.txt || true
+          head -c 300 listing.err || true
+
       - name: 从网盘下载文件
+        if: ${{ inputs.mode == 'download' }}
         run: |
           mkdir -p out
           args=(copy "alist:${{ inputs.path }}" out/ --max-size 1G --transfers 4 --retries 2 \
@@ -97,6 +131,7 @@ jobs:
           fi
 
       - name: 上传到 Release
+        if: ${{ inputs.mode == 'download' }}
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -108,7 +143,7 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: 飞书通知
-        if: always()
+        if: ${{ always() && inputs.mode == 'download' }}
         env:
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
           STATUS: ${{ job.status }}
