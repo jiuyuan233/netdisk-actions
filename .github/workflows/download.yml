@@ -32,7 +32,7 @@ jobs:
       - name: 启动 OpenList 并挂载网盘(Secrets 中的 cookie)
         env:
           OPENLIST_ADMIN_PASS: ${{ secrets.OPENLIST_ADMIN_PASS }}
-          OPENLIST_ADMIN_USER: ${{ secrets.OPENLIST_ADMIN_USER }}
+          OPENLIST_ADMIN_PASSWORD: ${{ secrets.OPENLIST_ADMIN_PASS }}
         run: |
           mkdir -p run
           (cd run && nohup openlist server > openlist.log 2>&1 &)
@@ -43,10 +43,9 @@ jobs:
           done
           if [ "$ok" != 1 ]; then
             echo "::error::OpenList 启动失败"
-            cat run/openlist.log
+            tail -30 run/openlist.log run/log/log.log 2>/dev/null
             exit 1
           fi
-          (cd run && openlist admin set "$OPENLIST_ADMIN_PASS") > /dev/null 2>&1
           python3 scripts/bootstrap_storages.py
 
       - name: 写入 rclone 配置
