@@ -38,8 +38,13 @@ jobs:
             cat run/openlist.log
             exit 1
           fi
-          echo "== openlist admin set 输出 =="
-          (cd run && openlist admin set "$OPENLIST_ADMIN_PASS") 2>&1 | tail -5
+          echo "== openlist admin set 完整输出 =="
+          (cd run && openlist admin set "$OPENLIST_ADMIN_PASS") 2>&1
+          echo "== 服务器日志中 admin 相关行 =="
+          grep -i -a "admin" run/openlist.log | head -10 || true
+          echo "== 登录探针 =="
+          curl -s -X POST http://127.0.0.1:5244/api/auth/login -H "Content-Type: application/json" -d "{\"username\":\"admin\",\"password\":\"$OPENLIST_ADMIN_PASS\"}" | head -c 300 || true
+          echo ""
           python3 scripts/bootstrap_storages.py
 
       - name: 配置 rclone
