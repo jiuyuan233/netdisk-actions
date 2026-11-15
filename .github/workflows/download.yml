@@ -12,7 +12,7 @@ on:
           - download
           - list
       path:
-        description: "OpenList 路径,如 /baidu/学习资料/高数"
+        description: "OpenList 路径,如 /baidu/宋浩精选【高数、线代、概率论】.zip"
         required: true
         type: string
       include:
@@ -24,13 +24,18 @@ on:
         required: false
         default: "1"
       probe:
-        description: "上传探针文件,探测百度应用目录名(一般不勾)"
+        description: "附加诊断/测速(一般不勾)"
         required: false
         default: "false"
         type: boolean
+      attempt:
+        description: "自动续传轮数(内部用,不用填)"
+        required: false
+        default: "0"
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: netdisk
@@ -59,10 +64,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 OpenList 和 rclone
+      - name: 安装 OpenList、rclone、aria2
         run: |
           curl -sL "https://github.com/OpenListTeam/OpenList/releases/download/${OPENLIST_VERSION}/openlist-linux-amd64.tar.gz" | tar xz -C /usr/local/bin
           curl -s https://rclone.org/install.sh | sudo bash
+          (sudo apt-get install -y aria2 > /dev/null 2>&1 || true)
+          command -v aria2c >/dev/null || echo "::warning::aria2 安装失败,将只有 rclone 回退通道"
 
       - name: 启动 OpenList 并挂载网盘(Secrets 中的 cookie)
         run: |
@@ -92,6 +99,19 @@ jobs:
             echo "pass = $(rclone obscure "${OPENLIST_ADMIN_PASS}")"
           } > ~/.config/rclone/rclone.conf
 
+      - name: 计算断点任务键
+        id: dlkey
+        run: echo "k=$(printf '%s' "${{ inputs.path }}" | md5sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: 恢复上次下载进度
+        if: ${{ inputs.mode == 'download' }}
+        uses: actions/cache/restore@v4
+        with:
+          path: out
+          key: netdisk-dl-${{ steps.dlkey.outputs.k }}-${{ github.run_number }}
+          restore-keys: |
+            netdisk-dl-${{ steps.dlkey.outputs.k }}-
+
       - name: 清理旧的下载 Release(保留最近 5 个)
         if: ${{ inputs.mode == 'download' }}
         continue-on-error: true
@@ -107,11 +127,6 @@ jobs:
         env:
           SRC_PATH: ${{ inputs.path }}
         run: |
-          if [ "${{ inputs.probe }}" = "true" ]; then
-            echo "probe" > /tmp/probe.txt
-            rclone copy /tmp/probe.txt "alist:${{ inputs.path }}/" --log-level INFO 2>&1 | tail -5
-            echo "探针文件已上传到 ${{ inputs.path }}"
-          fi
           rclone lsl "alist:${{ inputs.path }}" --max-depth "${{ inputs.depth }}" > listing.txt 2> listing.err || true
           n=$(grep -c . listing.txt || true)
           if [ "$n" = "0" ]; then
@@ -129,59 +144,94 @@ jobs:
             OL=$(curl -s -X POST http://127.0.0.1:5244/api/auth/login -H "Content-Type: application/json" -d "{\"username\":\"admin\",\"password\":\"$OPENLIST_ADMIN_PASS\"}" | jq -r .data.token)
             ADD=$(curl -s "http://127.0.0.1:5244/api/admin/storage/list" -H "Authorization: $OL" | jq -r '.data.content[] | select(.mount_path=="/baidu") | .addition')
             AT=$(echo "$ADD" | jq -r '.AccessToken // empty')
-            echo "== 存储addition配置(隐藏令牌) =="
-            echo "$ADD" | jq 'del(.RefreshToken, .AccessToken)' | head -c 1200
-            echo ""
-            echo "== OpenList fs list /baidu =="
-            curl -s -X POST http://127.0.0.1:5244/api/fs/list -H "Authorization: $OL" -H "Content-Type: application/json" -d '{"path":"/baidu","refresh":true,"page":1,"per_page":50}' | head -c 1500
-            echo ""
             echo "== 百度原始API诊断(AT=${AT:0:16}...) =="
             for D in "%2F" "%2Fapps"; do
               echo "--- dir=$D ---"
               curl -s "https://pan.baidu.com/rest/2.0/xpan/file?method=list&access_token=${AT}&dir=${D}&web=1&limit=100" | head -c 1500
               echo ""
             done
-            echo "== 高数文件测速(5MB 采样) =="
-            DL=$(curl -s "https://pan.baidu.com/rest/2.0/xpan/file?method=filemetas&access_token=${AT}&fsids=%5B770633613038917%5D&dlink=1" | jq -r '.list[0].dlink // empty')
-            if [ -n "$DL" ]; then
-              curl -s -L -A "netdisk" -r 0-5242879 -o /dev/null -w "HTTP %{http_code} | 平均 %{speed_download} B/s | 5MB 用时 %{time_total}s\n" "$DL"
-            else
-              echo "未能取得 dlink"
-            fi
           fi
 
-      - name: 从网盘下载文件(aria2 多线程直链,失败回退 rclone)
+      - name: 从网盘下载文件(aria2 分段续传,失败回退 rclone)
+        id: dl
         if: ${{ inputs.mode == 'download' }}
+        env:
+          SRC_PATH: ${{ inputs.path }}
+          ATTEMPT: ${{ inputs.attempt }}
         run: |
           mkdir -p out
-          (sudo apt-get install -y aria2 > /dev/null 2>&1 || true)
           OL=$(curl -s -X POST http://127.0.0.1:5244/api/auth/login -H "Content-Type: application/json" -d "{\"username\":\"admin\",\"password\":\"$OPENLIST_ADMIN_PASS\"}" | jq -r .data.token)
-          INFO=$(curl -s -X POST http://127.0.0.1:5244/api/fs/get -H "Authorization: $OL" -H "Content-Type: application/json" -d "{\"path\":\"${{ inputs.path }}\"}")
+          INFO=$(curl -s -X POST http://127.0.0.1:5244/api/fs/get -H "Authorization: $OL" -H "Content-Type: application/json" -d "{\"path\":\"${SRC_PATH}\"}")
           RAW_URL=$(echo "$INFO" | jq -r '.data.raw_url // empty')
-          echo "直链: ${RAW_URL:0:60}..."
-          OK=0
+          TOTAL=$(echo "$INFO" | jq -r '.data.size // 0')
+          echo "直链: ${RAW_URL:0:60}... | 大小: $TOTAL"
+          STATE=failed
           if [ -n "$RAW_URL" ]; then
-            UA=$(echo "$INFO" | jq -r '.data.header["User-Agent"] // .data.header["user-agent"] // empty')
-            A=(-x 16 -s 16 -k 4M --file-allocation=none --console-log-level=warn --summary-interval=60 -d out -o dl.bin)
+            UA=$(echo "$INFO" | jq -r '(.data.header | if type == "string" then (from_json | (.["User-Agent"] // .["user-agent"] // empty)) else (.["User-Agent"] // .["user-agent"] // empty) end) // empty' 2>/dev/null || true)
+            A=(-c -x 16 -s 16 -k 4M --file-allocation=none --auto-file-renaming=false --allow-overwrite=true --summary-interval=60 -d out -o dl.bin)
             if [ -n "$UA" ]; then A+=(--header "User-Agent: $UA"); fi
-            if aria2c "${A[@]}" "$RAW_URL"; then
-              mv out/dl.bin "out/$(basename "${{ inputs.path }}")" && OK=1
+            rc=0
+            timeout -k 30 190m aria2c "${A[@]}" "$RAW_URL" || rc=$?
+            if [ "$rc" = 0 ]; then
+              mv out/dl.bin "out/$(basename "$SRC_PATH")" && STATE=done
+            elif [ -f out/dl.bin ]; then
+              STATE=partial
             fi
           fi
-          if [ "$OK" != 1 ]; then
-            echo "== aria2 未成功,回退 rclone 单线程 =="
-            rm -f out/dl.bin
-            args=(copy "alist:${{ inputs.path }}" out/ --max-size 2G --transfers 4 --retries 2 --log-level NOTICE --stats-one-line --stats 60s)
+          if [ "$STATE" = "failed" ] && [ ! -f out/dl.bin ]; then
+            echo "== aria2 未成功且无断点,回退 rclone =="
+            args=(copy "alist:${SRC_PATH}" out/ --max-size 2G --transfers 4 --retries 2 --log-level NOTICE --stats-one-line --stats 60s)
             if [ -n "${{ inputs.include }}" ]; then args+=(--include "${{ inputs.include }}"); fi
-            rclone "${args[@]}"
+            if rclone "${args[@]}"; then STATE=done; fi
           fi
-          if [ -z "$(ls -A out/)" ]; then
-            echo "::error::没有下载到任何文件(路径不对、文件超过上限、或直链获取失败)"
+          echo "state=$STATE" >> "$GITHUB_OUTPUT"
+          if [ "$STATE" = "partial" ]; then
+            CUR=$(stat -c %s out/dl.bin 2>/dev/null || echo 0)
+            if [ "${TOTAL:-0}" -gt 0 ] 2>/dev/null; then PCT=$(( CUR * 100 / TOTAL )); else PCT=0; fi
+            echo "pct=$PCT" >> "$GITHUB_OUTPUT"
+            echo "cur=$CUR" >> "$GITHUB_OUTPUT"
+            echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+            echo "⏳ 本轮结束:已下载 $CUR/$TOTAL 字节($PCT%),进度已保存"
+            TEXT=$(printf '⏳ 分段下载进行中:已下载 %s%%(%s/%s 字节)\n进度已保存,即将自动排队下一轮继续(第 %s 轮)' "$PCT" "$CUR" "$TOTAL" "$(( ${ATTEMPT:-0} + 1 ))")
+            jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
+              | curl -s -X POST "${FEISHU_WEBHOOK}" \
+                  -H "Content-Type: application/json" -d @- > /dev/null
+          fi
+          if [ "$STATE" = "failed" ]; then
+            echo "::error::下载失败且无可用断点"
             exit 1
           fi
 
+      - name: 保存下载进度
+        if: ${{ always() && steps.dl.outputs.state == 'partial' }}
+        uses: actions/cache/save@v4
+        with:
+          path: out
+          key: netdisk-dl-${{ steps.dlkey.outputs.k }}-${{ github.run_number }}
+
+      - name: 自动排队下一轮续传
+        if: ${{ always() && steps.dl.outputs.state == 'partial' }}
+        env:
+          ATTEMPT: ${{ inputs.attempt }}
+          SRC_PATH: ${{ inputs.path }}
+        run: |
+          NEXT=$(( ${ATTEMPT:-0} + 1 ))
+          if [ "$NEXT" -gt 10 ]; then
+            TEXT=$(printf '❌ 自动续传已达 10 轮上限仍未完成,请人工检查(%s)' "$SRC_PATH")
+            jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
+              | curl -s -X POST "${FEISHU_WEBHOOK}" -H "Content-Type: application/json" -d @- > /dev/null
+            exit 0
+          fi
+          PAYLOAD=$(jq -n --arg ref "${{ github.ref_name }}" --arg path "$SRC_PATH" --arg attempt "$NEXT" \
+            '{ref:$ref, inputs:{mode:"download", path:$path, attempt:$attempt}}')
+          code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: token $REPO_PAT" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/download.yml/dispatches" \
+            -d "$PAYLOAD")
+          echo "排队下一轮: HTTP $code (attempt=$NEXT)"
+
       - name: 上传到 Release
-        if: ${{ inputs.mode == 'download' }}
+        if: ${{ steps.dl.outputs.state == 'done' }}
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -192,8 +242,18 @@ jobs:
             --notes "来源路径: \`${{ inputs.path }}\`" --latest
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+      - name: 清理已完成的进度缓存
+        if: ${{ steps.dl.outputs.state == 'done' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for id in $(gh api "repos/${{ github.repository }}/actions/caches?key=netdisk-dl-${{ steps.dlkey.outputs.k }}-" --jq '.actions_caches[].id' 2>/dev/null); do
+            gh api -X DELETE "repos/${{ github.repository }}/actions/caches/$id" || true
+          done
+
       - name: 飞书通知
-        if: ${{ always() && inputs.mode == 'download' }}
+        if: ${{ always() && inputs.mode == 'download' && steps.dl.outputs.state != 'partial' }}
         env:
           STATUS: ${{ job.status }}
           RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ steps.release.outputs.tag }}
