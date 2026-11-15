@@ -45,7 +45,12 @@ def http_json(url, key, payload, timeout=120):
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode(),
         method="POST",
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            # Cloudflare 会按签名拦截非浏览器 UA(error 1010),必须带一个正常 UA
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
