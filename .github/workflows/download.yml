@@ -4,13 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "操作模式(list=看目录里有什么;download=下载)"
+        description: "操作模式(默认 search:粘文件名就下载)"
         required: false
-        default: "download"
+        default: "search"
         type: choice
         options:
-          - "download"
+          - "search"
           - "list"
+          - "download"
           - "selftest"
       netdisk:
         description: "网盘(与 storages.json 挂载名一致,未配置 Secret 的会被跳过)"
@@ -27,12 +28,16 @@ on:
           - "123pan"
           - "115"
           - "lanzou"
+      keyword:
+        description: "search 模式:文件名关键词(直接复制转存时的文件名,可只写一部分)"
+        required: false
+        default: ""
       subpath:
-        description: "子路径(挂载名之后的部分,以 / 开头,如 /学习资料/xx.pdf;留空=网盘根目录)"
+        description: "list/download 模式:子路径(挂载名之后的部分,以 / 开头)"
         required: false
         default: ""
       include:
-        description: "文件名过滤(可选,通配符,如 *.mkv;留空=全部)"
+        description: "download 模式下载文件夹时的文件名过滤(可选)"
         required: false
         default: ""
       depth:
@@ -65,9 +70,12 @@ jobs:
       UC_COOKIE: ${{ secrets.UC_COOKIE }}
       ALIYUN_REFRESH_TOKEN: ${{ secrets.ALIYUN_REFRESH_TOKEN }}
       BAIDU_REFRESH_TOKEN: ${{ secrets.BAIDU_REFRESH_TOKEN }}
-      CLOUD189_COOKIE: ${{ secrets.CLOUD189_COOKIE }}
-      XUNLEI_COOKIE: ${{ secrets.XUNLEI_COOKIE }}
-      PAN123_TOKEN: ${{ secrets.PAN123_TOKEN }}
+      CLOUD189_USER: ${{ secrets.CLOUD189_USER }}
+      CLOUD189_PASS: ${{ secrets.CLOUD189_PASS }}
+      XUNLEI_USER: ${{ secrets.XUNLEI_USER }}
+      XUNLEI_PASS: ${{ secrets.XUNLEI_PASS }}
+      PAN123_USER: ${{ secrets.PAN123_USER }}
+      PAN123_PASS: ${{ secrets.PAN123_PASS }}
       PAN115_COOKIE: ${{ secrets.PAN115_COOKIE }}
       LANZOU_USER: ${{ secrets.LANZOU_USER }}
       LANZOU_PASS: ${{ secrets.LANZOU_PASS }}
@@ -87,7 +95,6 @@ jobs:
           FULL=$(printf '%s' "$FULL" | sed 's:/\+$::')
           if [ -z "$FULL" ]; then FULL="/${{ inputs.netdisk }}"; fi
           echo "full=$FULL" >> "$GITHUB_OUTPUT"
-          echo "完整路径: $FULL"
 
       - name: 安装 OpenList、rclone、aria2
         run: |
@@ -124,21 +131,54 @@ jobs:
             echo "pass = $(rclone obscure "${OPENLIST_ADMIN_PASS}")"
           } > ~/.config/rclone/rclone.conf
 
-      - name: 计算断点任务键
-        id: dlkey
-        run: echo "k=$(printf '%s' "${{ steps.src.outputs.full }}" | md5sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: search 模式:全盘搜索文件名
+        id: target
+        if: ${{ inputs.mode == 'search' || inputs.mode == 'download' }}
+        env:
+          SRC_PATH: ${{ steps.src.outputs.full }}
+        run: |
+          if [ "${{ inputs.mode }}" = "search" ]; then
+            KW="${{ inputs.keyword }}"
+            if [ -z "$KW" ]; then
+              echo "::error::search 模式需要在 keyword 里填文件名(复制转存时看到的名字)"
+              exit 1
+            fi
+            echo "全盘搜索:$KW ..."
+            rclone lsf "alist:${SRC_PATH}/" --recursive --files-only --max-depth 6 --log-level ERROR > all.txt 2> ls.err || true
+            grep -i -F -- "$KW" all.txt > matches.txt || true
+            N=$(grep -c . matches.txt || true)
+            if [ "$N" = "0" ]; then
+              TEXT=$(printf '❌ 全盘没搜到 "%s"。\n确认:1) 已在网盘 App 里转存到自己账号;2) 关键字和文件名一致。%s' "$KW" "$(head -c 150 ls.err)")
+              jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
+                | curl -s -X POST "${FEISHU_WEBHOOK}" -H "Content-Type: application/json" -d @- > /dev/null
+              exit 1
+            fi
+            MATCH=$(head -1 matches.txt)
+            TARGET="/${{ inputs.netdisk }}/${MATCH}"
+            echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+            echo "k=$(printf '%s' "$TARGET" | md5sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+            echo "matches=$N" >> "$GITHUB_OUTPUT"
+            echo "目标已确定(匹配 $N 个,下载第 1 个)"
+            TEXT=$(printf '🔎 搜索 "%s":匹配 %s 个,开始下载第 1 个:\n%s' "$KW" "$N" "$(head -5 matches.txt)")
+            jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
+              | curl -s -X POST "${FEISHU_WEBHOOK}" -H "Content-Type: application/json" -d @- > /dev/null
+          else
+            TARGET="$SRC_PATH"
+            echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+            echo "k=$(printf '%s' "$TARGET" | md5sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: 恢复上次下载进度
-        if: ${{ inputs.mode == 'download' }}
+        if: ${{ inputs.mode == 'download' || inputs.mode == 'search' }}
         uses: actions/cache/restore@v4
         with:
           path: out
-          key: netdisk-dl-${{ steps.dlkey.outputs.k }}-${{ github.run_number }}
+          key: netdisk-dl-${{ steps.target.outputs.k }}-${{ github.run_number }}
           restore-keys: |
-            netdisk-dl-${{ steps.dlkey.outputs.k }}-
+            netdisk-dl-${{ steps.target.outputs.k }}-
 
       - name: 清理旧的下载 Release(保留最近 5 个)
-        if: ${{ inputs.mode == 'download' }}
+        if: ${{ inputs.mode == 'download' || inputs.mode == 'search' }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -164,7 +204,7 @@ jobs:
                 -H "Content-Type: application/json" -d @- > /dev/null
           echo "== 目录清单 共${n}项(明细已发飞书,公开日志不显示文件名)=="
 
-      - name: 自检(上传→列表→直链下载→比对→清理)
+      - name: 自检(只读:列表→直链→分段拉取)
         if: ${{ inputs.mode == 'selftest' }}
         env:
           SRC_PATH: ${{ steps.src.outputs.full }}
@@ -204,21 +244,12 @@ jobs:
             | curl -s -X POST "${FEISHU_WEBHOOK}" -H "Content-Type: application/json" -d @- > /dev/null
           echo "自检结论: $([ "$PASS" = 1 ] && echo "PASS(取样 $SZ 字节)" || echo FAIL)"
           [ "$PASS" = 1 ] || exit 1
-          if [ "$PASS" = 1 ]; then
-            TEXT=$(printf '🧪 自检通过:上传/列表/直链下载/内容比对 全部 OK(网盘=%s,路径=%s)' "${{ inputs.netdisk }}" "$SRC_PATH")
-          else
-            TEXT=$(printf '❌ 自检失败:某环节未通过(网盘=%s,路径=%s),查看日志定位' "${{ inputs.netdisk }}" "$SRC_PATH")
-          fi
-          jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
-            | curl -s -X POST "${FEISHU_WEBHOOK}" -H "Content-Type: application/json" -d @- > /dev/null
-          echo "自检结论: $([ "$PASS" = 1 ] && echo PASS || echo FAIL)"
-          [ "$PASS" = 1 ] || exit 1
 
       - name: 从网盘下载文件(aria2 分段续传,失败回退 rclone)
         id: dl
-        if: ${{ inputs.mode == 'download' }}
+        if: ${{ inputs.mode == 'download' || inputs.mode == 'search' }}
         env:
-          SRC_PATH: ${{ steps.src.outputs.full }}
+          SRC_PATH: ${{ steps.target.outputs.target }}
           ATTEMPT: ${{ inputs.attempt }}
         run: |
           mkdir -p out
@@ -229,23 +260,31 @@ jobs:
           TOTAL=$(echo "$INFO" | jq -r '.data.size // 0')
           echo "直链: ${RAW_URL:0:60}... | 大小: $TOTAL"
           STATE=failed
-          if [ -n "$RAW_URL" ]; then
-            UA=$(echo "$INFO" | jq -r '(.data.header | if type == "string" then (from_json | (.["User-Agent"] // .["user-agent"] // empty)) else (.["User-Agent"] // .["user-agent"] // empty) end) // empty' 2>/dev/null || true)
-            A=(-c -x 16 -s 16 -k 4M --file-allocation=none --auto-file-renaming=false --allow-overwrite=true --summary-interval=60 -d out -o dl.bin)
-            if [ -n "$UA" ]; then A+=(--header "User-Agent: $UA"); fi
-            rc=0
-            timeout -k 30 190m aria2c "${A[@]}" "$RAW_URL" || rc=$?
-            if [ "$rc" = 0 ]; then
-              mv out/dl.bin "out/$(basename "$SRC_PATH")" && STATE=done
-            elif [ -f out/dl.bin ]; then
-              STATE=partial
-            fi
-          fi
-          if [ "$STATE" = "failed" ] && [ ! -f out/dl.bin ]; then
-            echo "== aria2 未成功且无断点,回退 rclone =="
+          ISDIR=$(echo "$INFO" | jq -r '.data.is_dir // false')
+          if [ "$ISDIR" = "true" ]; then
+            echo "== 目标是文件夹,直接走 rclone =="
             args=(copy "alist:${SRC_PATH}" out/ --max-size 2G --transfers 4 --retries 2 --log-level NOTICE --stats-one-line --stats 60s)
             if [ -n "${{ inputs.include }}" ]; then args+=(--include "${{ inputs.include }}"); fi
             if rclone "${args[@]}"; then STATE=done; fi
+          else
+            if [ -n "$RAW_URL" ]; then
+              UA=$(echo "$INFO" | jq -r '(.data.header | if type == "string" then (from_json | (.["User-Agent"] // .["user-agent"] // empty)) else (.["User-Agent"] // .["user-agent"] // empty) end) // empty' 2>/dev/null || true)
+              A=(-c -x 16 -s 16 -k 4M --file-allocation=none --auto-file-renaming=false --allow-overwrite=true --summary-interval=60 -d out -o dl.bin)
+              if [ -n "$UA" ]; then A+=(--header "User-Agent: $UA"); fi
+              rc=0
+              timeout -k 30 190m aria2c "${A[@]}" "$RAW_URL" || rc=$?
+              if [ "$rc" = 0 ]; then
+                mv out/dl.bin "out/$(basename "$SRC_PATH")" && STATE=done
+              elif [ -f out/dl.bin ]; then
+                STATE=partial
+              fi
+            fi
+            if [ "$STATE" = "failed" ] && [ ! -f out/dl.bin ]; then
+              echo "== aria2 未成功且无断点,回退 rclone =="
+              args=(copy "alist:${SRC_PATH}" out/ --max-size 2G --transfers 4 --retries 2 --log-level NOTICE --stats-one-line --stats 60s)
+              if [ -n "${{ inputs.include }}" ]; then args+=(--include "${{ inputs.include }}"); fi
+              if rclone "${args[@]}"; then STATE=done; fi
+            fi
           fi
           echo "state=$STATE" >> "$GITHUB_OUTPUT"
           if [ "$STATE" = "partial" ]; then
@@ -270,24 +309,24 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: out
-          key: netdisk-dl-${{ steps.dlkey.outputs.k }}-${{ github.run_number }}
+          key: netdisk-dl-${{ steps.target.outputs.k }}-${{ github.run_number }}
 
       - name: 自动排队下一轮续传
         if: ${{ always() && steps.dl.outputs.state == 'partial' }}
         env:
           ATTEMPT: ${{ inputs.attempt }}
-          SRC_PATH: ${{ steps.src.outputs.full }}
         run: |
           NEXT=$(( ${ATTEMPT:-0} + 1 ))
           if [ "$NEXT" -gt 10 ]; then
-            TEXT=$(printf '❌ 自动续传已达 10 轮上限仍未完成,请人工检查(%s)' "$SRC_PATH")
+            TEXT="❌ 自动续传已达 10 轮上限仍未完成,请人工检查"
             jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}' \
               | curl -s -X POST "${FEISHU_WEBHOOK}" -H "Content-Type: application/json" -d @- > /dev/null
             exit 0
           fi
           PAYLOAD=$(jq -n --arg ref "${{ github.ref_name }}" \
-            --arg netdisk "${{ inputs.netdisk }}" --arg sub "${{ inputs.subpath }}" --arg attempt "$NEXT" \
-            '{ref:$ref, inputs:{mode:"download", netdisk:$netdisk, subpath:$sub, attempt:$attempt}}')
+            --arg mode "${{ inputs.mode }}" --arg netdisk "${{ inputs.netdisk }}" \
+            --arg kw "${{ inputs.keyword }}" --arg sub "${{ inputs.subpath }}" --arg attempt "$NEXT" \
+            '{ref:$ref, inputs:{mode:$mode, netdisk:$netdisk, keyword:$kw, subpath:$sub, attempt:$attempt}}')
           code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
             -H "Authorization: token $REPO_PAT" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/download.yml/dispatches" \
@@ -315,7 +354,7 @@ jobs:
           TAG="dl-$(date +%Y%m%d-%H%M%S)"
           gh release create "$TAG" out/* \
             --title "网盘下载 $TAG" \
-            --notes "来源路径: \`${{ steps.src.outputs.full }}\`$NAMES" --latest
+            --notes "来源路径: \`${{ steps.target.outputs.target }}\`$NAMES" --latest
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: 清理已完成的进度缓存
@@ -324,17 +363,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for id in $(gh api "repos/${{ github.repository }}/actions/caches?key=netdisk-dl-${{ steps.dlkey.outputs.k }}-" --jq '.actions_caches[].id' 2>/dev/null); do
+          for id in $(gh api "repos/${{ github.repository }}/actions/caches?key=netdisk-dl-${{ steps.target.outputs.k }}-" --jq '.actions_caches[].id' 2>/dev/null); do
             gh api -X DELETE "repos/${{ github.repository }}/actions/caches/$id" || true
           done
 
       - name: 飞书通知
-        if: ${{ always() && inputs.mode == 'download' && steps.dl.outputs.state != 'partial' }}
+        if: ${{ always() && (inputs.mode == 'download' || inputs.mode == 'search') && steps.dl.outputs.state != 'partial' }}
         env:
           STATUS: ${{ job.status }}
           RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ steps.release.outputs.tag }}
           JOB_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SRC_PATH: ${{ steps.src.outputs.full }}
+          SRC_PATH: ${{ steps.target.outputs.target }}
         run: |
           if [ "$STATUS" = "success" ]; then
             TEXT=$(printf '✅ 网盘下载完成\n来源路径: %s\n%s\n文件下载: %s' "$SRC_PATH" "$(ls -lh out/ | tail -n +2)" "$RELEASE_URL")

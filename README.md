@@ -29,9 +29,22 @@
 
 > 以后在别处(本地/NAS)跑 OpenList,也请用同一套挂载名,路径即可通用。新增网盘:在 `storages.json` 加一行 + 配一个 Secret(驱动字段名见 [doc.oplist.org](https://doc.oplist.org),**所有字段显式写全,不要依赖默认值**)。
 
-## 怎么用(全程图形界面)
+## 怎么用(全程图形界面,最常用只要 30 秒)
 
-### ① 看网盘里有什么
+### ⭐ ① 搜索下载(最常用:转存后粘文件名就行)
+
+网盘 App 里把分享**转存到自己账号**后:
+
+```
+│ 操作模式   [ search ▼ ]   ← 默认就是它          │
+│ 网盘      [ baidu ▼ ]                           │
+│ 关键词    [ WRC8中文路书-DODO音频  ]  ← 复制粘贴文件名 │
+│        [ 绿色 Run workflow 按钮 ]               │
+```
+
+workflow 会**全盘搜索**你网盘里带这个关键词的文件,自动开始下载。飞书先收到 🔎 匹配结果,完成后收 ✅ + Release 链接。找不到会收到 ❌ 和提示(多半是没转存成功)。
+
+### ② 看网盘里有什么(list)
 
 打开仓库 → **Actions** 标签 → 左侧选 **「网盘下载」** → 右侧 **Run workflow ▼** 绿色按钮,表单这样填:
 
@@ -55,7 +68,7 @@
 
 Actions → **AI 维护** → Run workflow → `task` 里用中文写任务(如「升级 OpenList 版本号」「修复某网盘配置」)→ AI 修改文件并**自动开 PR** → 飞书收审核链接 → 人工审核合并。安全设计:文件白名单、密钥泄漏拦截、YAML 顶格断裂拦截、只开 PR 不直改 main。详见 [docs/HANDOVER.md](docs/HANDOVER.md) 第 6-7 节。
 
-### ② 下载
+### ③ 下载
 
 同样的表单:
 
@@ -68,7 +81,7 @@ Actions → **AI 维护** → Run workflow → `task` 里用中文写任务(如�
 
 跑完**飞书**收到 ✅ + Release 链接。单文件上限 2G(Release 上限),超出部分靠断点续传多轮接力。
 
-### ③ 取回文件
+### ④ 取回文件
 
 - 网页:点飞书里的 Release 链接(私有仓库会要求先登录 GitHub)→ Assets 里点文件下载
 - 命令:`gh release download --repo 你的用户名/netdisk-actions --dir D:\下载`(自动选最新)
